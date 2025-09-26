@@ -29,6 +29,12 @@ void dumpGamepad(ControllerPtr ctl) {
         ctl->r2()
     );
 }
+void movement(ControllerPtr crt){
+    
+    if (crt->axisX() >= 250){
+        Console.printf("hello");
+    }
+}
 
 void setup() {
     BP32.setup(&onConnectedController, &onDisconnectedController);
@@ -56,9 +62,14 @@ void setup() {
 // }
 
 void loop() {
-    
-    digitalWrite(ONBOARD_LED_PIN, HIGH);
-    delay(100);
-    digitalWrite(ONBOARD_LED_PIN, LOW);
-    delay(100);
+    vTaskDelay(1); // Ensures WDT does not get triggered when no controller is connected
+    BP32.update(); 
+    for (auto myController : myControllers) { // Only execute code when controller is connected
+        if (myController && myController->isConnected() && myController->hasData()) {        
+          
+            movement(myController);
+
+            //dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
+        }
+    }
 }
