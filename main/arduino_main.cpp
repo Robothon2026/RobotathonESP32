@@ -33,6 +33,7 @@ void movement(ControllerPtr crt){
     
     if (crt->axisX() >= 250){
         Console.printf("hello");
+        Console.printf("check");
     }
 }
 
