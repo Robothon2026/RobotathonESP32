@@ -28,6 +28,12 @@ void dumpGamepad(ControllerPtr ctl) {
         ctl->r2()
     );
 }
+void movement(ControllerPtr crt){
+    
+    if (crt->axisX() >= 250){
+        Console.printf("hello");
+    }
+}
 
 void setup() {
     BP32.setup(&onConnectedController, &onDisconnectedController);
@@ -42,13 +48,9 @@ void loop() {
     for (auto myController : myControllers) { // Only execute code when controller is connected
         if (myController && myController->isConnected() && myController->hasData()) {        
           
-            /*
-            ====================
-            Your code goes here!
-            ====================
-            */
+            movement(myController);
 
-            dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
+            //dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
         }
     }
 }
