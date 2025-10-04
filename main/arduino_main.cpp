@@ -10,11 +10,11 @@
 
 #define ONBOARD_LED_PIN 2
 
-#define IN1 16
-#define IN2 17
+#define IN1 19
+#define IN2 18
 
-#define IN3 5
-#define IN4 18
+#define IN3 17
+#define IN4 16
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // BP32 library allows for up to 4 concurrent controller connections, but we only need 1
 
@@ -53,63 +53,58 @@ void dumpGamepad(ControllerPtr ctl) {
  */
 void movement(ControllerPtr crt){
     int lY = crt->axisY(); // Left joystick Y axis
-    // int aLY = abs(lY) * 255 / 512; // Adjusted Left joystick Y axis
+    int aLY = abs(lY) * 255 / 512; // Adjusted Left joystick Y axis
     int rX = crt->axisRX();// Right joystick X axis
     int aRX = abs(rX) * 255 / 512; // Adjusted Right joystick X axis
     // bool r1 = crt->r1();   // Right bumper
     // bool l1 = crt->l1();   // Left bumper
 
-    int leftMotorAdjustment;
-    int rightMotorAdjustment;
+    int motorAdjustment = max(0, aLY - aRX);
 
     if (lY <= -30) { // If pushing joystick forward
 
         if (rX <= -30) { // Change values if stuck drift occurs
             // Turn Left
             // Reduce speed of left motor
-            leftMotorAdjustment = topSpeed - aRX;
-            analogWrite(IN1, leftMotorAdjustment);
+            analogWrite(IN1, motorAdjustment);
             analogWrite(IN2, 0);
             analogWrite(IN3, topSpeed);
             analogWrite(IN4, 0);
         } else if (rX > 30) {
             // Turn Right
             // Reduce speed of right motor
-            rightMotorAdjustment = topSpeed - aRX;
-            analogWrite(IN1, topSpeed);
+            analogWrite(IN1, aLY);
             analogWrite(IN2, 0);
-            analogWrite(IN3, rightMotorAdjustment);
+            analogWrite(IN3, motorAdjustment);
             analogWrite(IN4, 0);
         } else {
             // Move Forward
-            analogWrite(IN1, topSpeed);
+            analogWrite(IN1, aLY);
             analogWrite(IN2, 0);
-            analogWrite(IN3, topSpeed);
+            analogWrite(IN3, aLY);
             analogWrite(IN4, 0);
-        }
+        } // add 4th case for complete stop
     } else if (lY > 30) { // If pulling joystick backward
         if (rX <= -30) {
             // Turn Left
             // Reduce speed of left motor
-            leftMotorAdjustment = topSpeed - aRX;
             analogWrite(IN1, 0);
-            analogWrite(IN2, leftMotorAdjustment);
+            analogWrite(IN2, motorAdjustment);
             analogWrite(IN3, 0);
-            analogWrite(IN4, topSpeed);
+            analogWrite(IN4, aLY);
         } else if (rX > 30) {
             // Turn Right
             // Reduce speed of right motor
-            rightMotorAdjustment = topSpeed - aRX;
             analogWrite(IN1, 0);
-            analogWrite(IN2, topSpeed);
+            analogWrite(IN2, aLY);
             analogWrite(IN3, 0);
-            analogWrite(IN4, rightMotorAdjustment);
+            analogWrite(IN4, motorAdjustment);
         } else {
             // Move Backward
             analogWrite(IN1, 0);
-            analogWrite(IN2, topSpeed);
+            analogWrite(IN2, aLY);
             analogWrite(IN3, 0);
-            analogWrite(IN4, topSpeed);
+            analogWrite(IN4, aLY);
         }
     }
 }
@@ -120,17 +115,37 @@ void setup() {
     esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
     uni_bt_allowlist_set_enabled(true);
     pinMode(ONBOARD_LED_PIN, OUTPUT);
+    pinMode(IN3, OUTPUT);
+    pinMode(IN4, OUTPUT);
+    Serial.print(115200);
 }
 
 void loop() {
     vTaskDelay(1); // Ensures WDT does not get triggered when no controller is connected
+             
     BP32.update(); 
     for (auto myController : myControllers) { // Only execute code when controller is connected
         if (myController && myController->isConnected() && myController->hasData()) {        
 
-            // movement(myController);
+            movement(myController);
+            //  int l2=myController->l2();
+            //  int r2=myController->r2();
+            //  if(l2==1){
+            //     analogWrite(IN1, 255);
+            //     analogWrite(IN2, 0);
+            //     analogWrite(IN3, 255);
+            //     analogWrite(IN4, 0);
+                
 
-            dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
+            //  }else if(r2==1){
+            //     analogWrite(IN1, 0);
+            //     analogWrite(IN2, 255);
+            //     analogWrite(IN3, 0);
+            //     analogWrite(IN4, 255);
+            //  }
+
+
+            //dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
         }
     }
 }
