@@ -9,7 +9,17 @@
 #include "controller_callbacks.h"
 
 #define ONBOARD_LED_PIN 2
+
+#define IN1 16
+#define IN2 17
+
+#define IN3 5
+#define IN4 18
+
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // BP32 library allows for up to 4 concurrent controller connections, but we only need 1
+
+int topSpeed = 255; // Max speed of motors
+
 
 void dumpGamepad(ControllerPtr ctl) {
     Console.printf(
@@ -29,11 +39,78 @@ void dumpGamepad(ControllerPtr ctl) {
         ctl->r2()
     );
 }
+
+/*
+ * This function is called every time the loop function runs and a controller is connected.
+ * It handles the movement of the robot based on the controller input.
+ * 
+ * Controls:
+ * Forward-Backward movement is controlled by the left joystick Y axis.
+ * Left-Right turning is controlled by the left joystick X axis.
+ * Clockwise-Counterclockwise rotation is controlled by the left-right bumpers.
+ * 
+ * @param crt pointer to controller
+ */
 void movement(ControllerPtr crt){
-    
-    if (crt->axisX() >= 250){
-        Console.printf("hello");
-        Console.printf("check");
+    int lY = crt->axisY(); // Left joystick Y axis
+    // int aLY = abs(lY) * 255 / 512; // Adjusted Left joystick Y axis
+    int rX = crt->axisRX();// Right joystick X axis
+    int aRX = abs(rX) * 255 / 512; // Adjusted Right joystick X axis
+    // bool r1 = crt->r1();   // Right bumper
+    // bool l1 = crt->l1();   // Left bumper
+
+    int leftMotorAdjustment;
+    int rightMotorAdjustment;
+
+    if (lY <= -30) { // If pushing joystick forward
+
+        if (rX <= -30) { // Change values if stuck drift occurs
+            // Turn Left
+            // Reduce speed of left motor
+            leftMotorAdjustment = topSpeed - aRX;
+            analogWrite(IN1, leftMotorAdjustment);
+            analogWrite(IN2, 0);
+            analogWrite(IN3, topSpeed);
+            analogWrite(IN4, 0);
+        } else if (rX > 30) {
+            // Turn Right
+            // Reduce speed of right motor
+            rightMotorAdjustment = topSpeed - aRX;
+            analogWrite(IN1, topSpeed);
+            analogWrite(IN2, 0);
+            analogWrite(IN3, rightMotorAdjustment);
+            analogWrite(IN4, 0);
+        } else {
+            // Move Forward
+            analogWrite(IN1, topSpeed);
+            analogWrite(IN2, 0);
+            analogWrite(IN3, topSpeed);
+            analogWrite(IN4, 0);
+        }
+    } else if (lY > 30) { // If pulling joystick backward
+        if (rX <= -30) {
+            // Turn Left
+            // Reduce speed of left motor
+            leftMotorAdjustment = topSpeed - aRX;
+            analogWrite(IN1, 0);
+            analogWrite(IN2, leftMotorAdjustment);
+            analogWrite(IN3, 0);
+            analogWrite(IN4, topSpeed);
+        } else if (rX > 30) {
+            // Turn Right
+            // Reduce speed of right motor
+            rightMotorAdjustment = topSpeed - aRX;
+            analogWrite(IN1, 0);
+            analogWrite(IN2, topSpeed);
+            analogWrite(IN3, 0);
+            analogWrite(IN4, rightMotorAdjustment);
+        } else {
+            // Move Backward
+            analogWrite(IN1, 0);
+            analogWrite(IN2, topSpeed);
+            analogWrite(IN3, 0);
+            analogWrite(IN4, topSpeed);
+        }
     }
 }
 
@@ -45,32 +122,15 @@ void setup() {
     pinMode(ONBOARD_LED_PIN, OUTPUT);
 }
 
-// void loop() {
-//     vTaskDelay(1); // Ensures WDT does not get triggered when no controller is connected
-//     BP32.update(); 
-//     for (auto myController : myControllers) { // Only execute code when controller is connected
-//         if (myController && myController->isConnected() && myController->hasData()) {        
-          
-//             /*
-//             ====================
-//             Your code goes here!
-//             ====================
-//             */
-
-//             dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
-//         }
-//     }
-// }
-
 void loop() {
     vTaskDelay(1); // Ensures WDT does not get triggered when no controller is connected
     BP32.update(); 
     for (auto myController : myControllers) { // Only execute code when controller is connected
         if (myController && myController->isConnected() && myController->hasData()) {        
-          
-            movement(myController);
 
-            //dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
+            // movement(myController);
+
+            dumpGamepad(myController); // Prints the gamepad state, delete or comment if don't need
         }
     }
 }
