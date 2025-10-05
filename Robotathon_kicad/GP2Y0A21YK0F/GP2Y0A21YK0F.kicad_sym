@@ -1,0 +1,103 @@
+
+(kicad_symbol_lib (version 20211014) (generator kicad_symbol_editor)
+  (symbol "GP2Y0A21YK0F" (pin_names (offset 1.016)) (in_bom yes) (on_board yes)
+    (property "Reference" "U" (id 0) (at -12.7 0.0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom left))
+    )
+    (property "Value" "GP2Y0A21YK0F" (id 1) (at -12.7 -2.54 0)
+      (effects (font (size 1.27 1.27)) (justify bottom left))
+    )
+    (property "Footprint" "GP2Y0A21YK0F:22-23-2031" (id 2) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "MF" "SHARP/Socle Technology" (id 4) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Description" "\n                        \n                            Optical Sensor 10 ~ 80cm Analog Output\n                        \n" (id 5) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Package" "HVQFN-32 Sharp Microelectronics" (id 6) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Price" "None" (id 7) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "SnapEDA_Link" "https://www.snapeda.com/parts/GP2Y0A21YK0F/SHARP%252FSocle+Technology/view-part/?ref=snap" (id 8) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "MP" "GP2Y0A21YK0F" (id 9) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Availability" "In Stock" (id 10) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (property "Check_prices" "https://www.snapeda.com/parts/GP2Y0A21YK0F/SHARP%252FSocle+Technology/view-part/?ref=eda" (id 11) (at 0 0 0)
+      (effects (font (size 1.27 1.27)) (justify bottom) hide)
+    )
+    (symbol "GP2Y0A21YK0F_0_0"
+      (polyline
+        (pts (xy 7.62 10.16) (xy 10.16 5.08)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 10.16 5.08) (xy 12.7 10.16)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 12.7 10.16) (xy 7.62 10.16)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 7.62 5.08) (xy 12.7 5.08)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 5.08 20.32) (xy 5.08 15.24)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 5.08 15.24) (xy 10.16 17.78)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 10.16 17.78) (xy 5.08 20.32)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 10.16 20.32) (xy 10.16 15.24)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 0.0 20.32) (xy 2.54 17.78)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 2.54 17.78) (xy 0.0 15.24)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 0.0 15.24) (xy 2.54 12.7)) (stroke (width 0.254))
+      )
+      (polyline
+        (pts (xy 2.54 12.7) (xy 0.0 10.16)) (stroke (width 0.254))
+      )
+      (rectangle (start -12.7 2.54) (end 15.24 22.86)
+        (stroke (width 0.254)) (fill (type background))
+      )
+      (pin bidirectional line (at -17.78 17.78 0) (length 5.08)
+        (name "VCC"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "2"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -17.78 12.7 0) (length 5.08)
+        (name "VOUT"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "3"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+      (pin bidirectional line (at -17.78 7.62 0) (length 5.08)
+        (name "GND"
+          (effects (font (size 1.016 1.016)))
+        )
+        (number "1"
+          (effects (font (size 1.016 1.016)))
+        )
+      )
+    )
+  )
+)
