@@ -56,31 +56,6 @@ void dumpGamepad(ControllerPtr ctl) {
 }
 
 /*
- * This method simplifies the motor movements. 
- * It takes in all motor pins and adjusts accordingly based on forward-backwards movement.
- * @param IN1 left motor forward pin
- * @param IN2 left motor backward pin
- * @param IN3 right motor forward pin
- * @param IN4 right motor backward pin
- * @param leftSpeed speed of left motor
- * @param rightSpeed speed of right motor
- * @param moveForward bool to determine if moving forward (true) or backward (false)
- */
-void moveMotorsHelper(int leftSpeed, int rightSpeed, bool moveForward) {
-    if (moveForward) {
-        analogWrite(IN1, leftSpeed);
-        analogWrite(IN2, 0);
-        analogWrite(IN3, rightSpeed);
-        analogWrite(IN4, 0);
-    } else {
-        analogWrite(IN1, 0);
-        analogWrite(IN2, leftSpeed);
-        analogWrite(IN3, 0);
-        analogWrite(IN4, rightSpeed);
-    }
-}
-
-/*
  * This method is called every time the loop function runs and a controller is connected.
  * It handles the movement of the robot based on the controller input.
  * Clockwise-Counterclockwise rotation is controlled by the left-right bumpers.
@@ -88,34 +63,27 @@ void moveMotorsHelper(int leftSpeed, int rightSpeed, bool moveForward) {
  */
 void moveMotors(ControllerPtr crt) {
     int lY = crt->axisY(); // Left joystick Y axis
-    int aLY = abs(lY) * 255 / 512; // Adjusted Left joystick Y axis
-    int rX = crt->axisRX();// Right joystick X axis
-    int aRX = abs(rX) * 255 / 512; // Adjusted Right joystick X axis
-    
-    // Calculate motor adjustment for turning.
-    // In case of negative value, it is set to 0
-    int motorAdjustment = max(0, aLY - aRX);
-    bool moveForward = (lY <= 0); // Determine if moving forward or backward
+    int aLY = abs(lY) * 255 / 512; // Adjusted Left joystick Y axis for speed input [0, 255]
+    int rY = crt->axisRY();// Right joystick Y axis
+    int aRY = abs(rY) * 255 / 512; // Adjusted Right joystick Y axis for speed input [0, 255]
 
-    // Future: Find value when motor starts to move properly and update all thresholds.
-    if (lY <= -30) { // If left joystick is pushed forward
-        if (rX <= -30) { // If right joystick is pushed left
-            moveMotorsHelper(motorAdjustment, aLY, moveForward);
-        } else if (rX > 30) { // If right joystick is pushed right
-            moveMotorsHelper(aLY, motorAdjustment, moveForward);
-        } else { // If right joystick isn't being pushed either direction -> Just move forward
-            moveMotorsHelper(aLY, aLY, moveForward);
-        }
-    } else if (lY > 30) { // If left joystick is pushed backward
-        if (rX <= -30) { // If right joystick is pushed left
-            moveMotorsHelper(motorAdjustment, aLY, moveForward);
-        } else if (rX > 30) { // If right joystick is pushed right
-            moveMotorsHelper(aLY, motorAdjustment, moveForward);
-        } else { // If right joystick isn't being pushed either direction -> Just move backward
-            moveMotorsHelper(aLY, aLY, moveForward);
-        }
-    } else { // If left joystick isn't being pushed either direction -> Stop
-        moveMotorsHelper(0, 0, moveForward); 
+    bool lForward = (lY <= 0); // Determine if left joystick is moving forward or backward
+    bool rForward = (rY <= 0); // Determine if right joystick is moving forward or backward
+
+    if (lForward) { // if left joystick is forward, move motor forward at adjusted speed
+        analogWrite(IN1, aLY);
+        analogWrite(IN2, 0);
+    } else { // else, move motor backwards at adjusted speed
+        analogWrite(IN1, 0);
+        analogWrite(IN2, aLY);
+    }
+
+    if (rForward) { // if right joystick is forward, move motor forward at adjusted speed
+        analogWrite(IN3, aRY);
+        analogWrite(IN4, 0);
+    } else { // else, move motor backwards at adjusted speed
+        analogWrite(IN3, 0);
+        analogWrite(IN4, aRY);
     }
 }
 
@@ -150,7 +118,7 @@ void loop() {
 
             // Moves servo based on l1 and l2 imputs. Not implemented yet.
             // moveServo(myController);
-
+            // Left/right still very inconsistent but will be like that until they are placed on the base permanently.
         }
     }
 }
