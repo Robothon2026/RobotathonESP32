@@ -87,6 +87,10 @@ void moveMotors(ControllerPtr crt) {
     }
 }
 
+void LineFollow(ControllerPtr crt){
+    boolean pressed = crt->a();
+}
+
 void setup() {
     BP32.setup(&onConnectedController, &onDisconnectedController);
     BP32.forgetBluetoothKeys(); 
@@ -119,6 +123,8 @@ void loop() {
             // Moves servo based on l1 and l2 imputs. Not implemented yet.
             // moveServo(myController);
             // Left/right still very inconsistent but will be like that until they are placed on the base permanently.
+
+            LineFollow(myController);
         }
     }
 }
