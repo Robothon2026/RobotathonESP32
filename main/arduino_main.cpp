@@ -22,12 +22,32 @@ extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // BP32 library allows fo
 
 const int topSpeed = 255; // Max speed of motors
 
+int currentMode = 0; // Current mode for robot
+
 /*
  * This method clears the terminal screen by printing 10 new lines.
  */
 void cleanTerminal() {
     for (int i = 0; i < 10; i++) {
         Console.println();
+    }
+}
+
+/*
+ * This method sets the current mode based on the controller input.
+ * @param ctl pointer to controller
+ */
+void setMode(ControllerPtr ctl) {
+    if (ctl->dpad()) {
+        currentMode = 0; // Manual mode
+    } else if (ctl->b()) {
+        currentMode = 1; // Color mode
+    } else if (ctl->a()) {
+        currentMode = 2; // Wall mode
+    } else if (ctl->x()) {
+        currentMode = 3; // Mechanical mode
+    } else if (ctl->y()) {
+        currentMode = 4; // Line follow mode
     }
 }
 
@@ -87,8 +107,24 @@ void moveMotors(ControllerPtr crt) {
     }
 }
 
-void LineFollow(ControllerPtr crt){
-    boolean pressed = crt->a();
+void moveServo(ControllerPtr crt) {
+    // Not implemented yet.
+}
+
+void colorAutomation() {
+    // Not implemented yet.
+}
+
+void wallAutomation() {
+    // Not implemented yet.
+}
+
+void mechanicalAutomation() {
+    // Not implemented yet.
+}
+
+void lineFollowAutomation() {
+    // Not implemented yet.
 }
 
 void setup() {
@@ -116,18 +152,30 @@ void loop() {
     // Loop code will only run if controller is connected.
     for (auto myController : myControllers) { // Only execute code when controller is connected
         if (myController && myController->isConnected() && myController->hasData()) {   
+            setMode(myController); // Set current mode based on controller input
+
+            // zr shooting sequence: spin launch motor, delay, spin the servo to allow ball in.
+            // zl intake sequence: spins motor to intake balls
+            // d pad to pivot up and down shooter
             
-            // Moves motors based on left and right joystick input.
-            moveMotors(myController);
-
-            // Moves servo based on l1 and l2 imputs. Not implemented yet.
-            // moveServo(myController);
-            // Left/right still very inconsistent but will be like that until they are placed on the base permanently.
-
-            LineFollow(myController);
+            switch (currentMode) {
+                case 0: // Manual mode
+                    moveMotors(myController);
+                    moveServo(myController);
+                    break;
+                case 1: // Color mode
+                    colorAutomation();
+                    break;
+                case 2: // Wall mode
+                    wallAutomation();
+                    break;
+                case 3: // Mechanical mode
+                    mechanicalAutomation();
+                    break;
+                case 4: // Line follow mode
+                    lineFollowAutomation();
+                    break;
+            }
         }
     }
 }
-
-//This is a comment
-//THis is a 2nd comment
