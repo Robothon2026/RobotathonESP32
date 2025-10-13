@@ -13,50 +13,38 @@
 #include <Arduino_APDS9960.h> // Color sensor library
 #include <bits/stdc++.h>
 
-// LED pin
-#define ONBOARD_LED_PIN 2
-
-// Right motor pins
-#define IN1 19
+#define ONBOARD_LED_PIN 2 // LED pin
+#define IN1 19 // Right motor pins
 #define IN2 18
+#define IN3 17 // Left motor pins
+#define IN4 16 //         0  1  2  3  4  5  6  7               
+#define LINE_FOLLOW_PINS {0, 0, 0, 0, 0, 0, 0, 0} // place holders for line sensor pins
+#define IR_PIN 0 // place holders for IR sensor pins
+#define APDS9960_INT_PIN 0 // place holders for color sensor pins and settings
+#define I2C_SDA_PIN 0
+#define I2C_SCL_PIN 0
 
-// Left motor pins
-#define IN3 17
-#define IN4 16
-
-// Line sensor pins       0   1   2   3   4   5   6   7
-#define LINE_FOLLOW_PINS {34, 35, 32, 33, 25, 26, 27, 14}
-
-// IR sensor pins
-#define IR_PIN 13
-
-// Color sensor pins and settings
-#define APDS9960_INT_PIN 4
-#define I2C_SDA_PIN 21
-#define I2C_SCL_PIN 22
-
-const int TOP_MOTOR_SPEED = 255; // Max speed of motors
-const int MAX_JOYSTICK_INPUT = 512; // Max speed value from controller
-const int NUM_LINE_SENSORS = 8; // Number of line sensors
+const int TOP_MOTOR_SPEED = 255; // max speed of motors
+const int MAX_JOYSTICK_INPUT = 512; // max speed value from controller
+const int NUM_LINE_SENSORS = 8; // number of line sensors
 const int I2C_FREQUENCY = 100000; // I2C frequency for color sensor
 
-// Controller
-extern ControllerPtr myControllers[BP32_MAX_GAMEPADS];
-
-// Line
-QTRSensors qtr;
-
-// IR
-ESP32SharpIR irSensor(ESP32SharpIR::GP2Y0A21YK0F, IR_PIN);
-
-// Color
-TwoWire I2C_0 = TwoWire(0);
+extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
+QTRSensors qtr;// line
+ESP32SharpIR irSensor(ESP32SharpIR::GP2Y0A21YK0F, IR_PIN);// IR
+TwoWire I2C_0 = TwoWire(0);// color
 APDS9960 apds = APDS9960(I2C_0, APDS9960_INT_PIN);
 
-int currentMode = 0; // Current mode for robot
+int currentMode = 0; // current mode for robot
+int colors[4]; // array holding information for r, g, b, a
+uint16_t sensors[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SENSORS
+
+//-----------------------------------------------------------------------------------------------//
+//-----------------------------------------<< HELPERS >>-----------------------------------------//
+//-----------------------------------------------------------------------------------------------//
 
 /*
- * This method clears the terminal screen by printing 10 new lines.
+ * Cleans terminal to debug easier.
  */
 void cleanTerminal() {
     for (int i = 0; i < 10; i++) {
@@ -65,7 +53,8 @@ void cleanTerminal() {
 }
 
 /*
- * This method calibrates the line sensor by taking multiple readings.
+ * Calibrates line sensors over 250 iterations. 
+ * Increase if need be.
  */
 void calibrateLineSensors() {
     for (uint8_t i = 0; i < 250; i++) {
@@ -77,7 +66,7 @@ void calibrateLineSensors() {
 }
 
 /*
- * This method sets the current mode based on the controller input.
+ * Sets current mode based on controller input.
  * @param ctl pointer to controller
  */
 void setMode(ControllerPtr ctl) {
@@ -94,8 +83,12 @@ void setMode(ControllerPtr ctl) {
     }
 }
 
+//-----------------------------------------------------------------------------------------------//
+//------------------------------------------<< DEBUG >>------------------------------------------//
+//-----------------------------------------------------------------------------------------------//
+
 /*
- * This method prints all button values for the controller.
+ * Prints all button values for the controller.
  * @param ctl pointer to controller
  */
 void dumpGamepad(ControllerPtr ctl) {
@@ -119,26 +112,50 @@ void dumpGamepad(ControllerPtr ctl) {
 }
 
 /*
- * This method sets up the motor pins as outputs.
+ * Prints color values.
  */
-void motorPinsSetup() {
-    // Set motor pins
-    pinMode(IN1, OUTPUT);
-    pinMode(IN2, OUTPUT); // Are these needed? Try removing and if it works, remove.
-    pinMode(IN3, OUTPUT);
-    pinMode(IN4, OUTPUT);
+void colorDebug() {
+    cleanTerminal();
+    Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colors[0], colors[1], colors[2], colors[3]);
+    delay(100);
 }
 
 /*
- * This method is called every time the loop function runs and a controller is connected.
- * It handles the movement of the robot based on the controller input.
- * Clockwise-Counterclockwise rotation is controlled by the left-right bumpers.
- * @param crt pointer to controller
+ * Prints the wall sensor values.
  */
-void moveMotors(ControllerPtr crt) {
-    int lY = crt->axisY(); // Left joystick Y axis
+void irDebug() {
+    cleanTerminal();
+    float distance = irSensor.getDistanceFloat();
+    Console.printf("Distance: %.2f cm\n", distance);
+    delay(100);
+}
+
+/*
+ * Prints the line sensor values.
+ */
+void lineDebug() {
+    cleanTerminal();
+    Console.printf("Line Sensor Values:\n");
+    for (int i = 0; i < NUM_LINE_SENSORS; i++) {
+        Console.printf("%d  ", sensors[i]);
+    }
+    Console.println();
+    delay(100);
+}
+
+//-----------------------------------------------------------------------------------------------//
+//------------------------------------------<< MODES >>------------------------------------------//
+//-----------------------------------------------------------------------------------------------//
+
+/*
+ * Handles the movement of the robot.
+ * Left joystick controls left motor and right joystick controls right motor.
+ * @param ctl pointer to controller
+ */
+void moveMotors(ControllerPtr ctl) {
+    int lY = ctl->axisY(); // Left joystick Y axis
     int aLY = abs(lY) * TOP_MOTOR_SPEED / MAX_JOYSTICK_INPUT; // Adjusted Left joystick Y axis for speed input [0, TOP_MOTOR_SPEED]
-    int rY = crt->axisRY();// Right joystick Y axis
+    int rY = ctl->axisRY();// Right joystick Y axis
     int aRY = abs(rY) * TOP_MOTOR_SPEED / MAX_JOYSTICK_INPUT; // Adjusted Right joystick Y axis for speed input [0, TOP_MOTOR_SPEED]
 
     bool lForward = (lY <= 0); // Determine if left joystick is moving forward or backward
@@ -162,106 +179,81 @@ void moveMotors(ControllerPtr crt) {
 }
 
 /*
- * It handles the movement of the servo based on the controller input.
- * @param crt pointer to controller
+ * Handles the movement of the servo based.
+ * @param ctl pointer to controller
  */
-void moveServo(ControllerPtr crt) {
+void moveServo(ControllerPtr ctl) {
     // Not implemented yet.
 }
 
 /*
- * This method sets up the color sensor and I2C communication.
+ * Handles the color sensor automation setup.
  */
-void colorAutomationSetup() {
-    //sets up I2C protocol and color sensor
-    I2C_0.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQUENCY);
-    apds.setInterruptPin(APDS9960_INT_PIN);
-    apds.begin();
-}
-
-/*
- * This method prints the color values for debugging purposes.
- */
-void colorAutomationDebug(int colors[]) {
-    cleanTerminal();
-    Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colors[0], colors[1], colors[2], colors[3]);
-    delay(100);
-}
-
-/*
- * This method handles the color sensor automation setup.
- */
-void colorAutomation() {
-    int colors[4]; // Array to hold RGBA values
+void colorAutomation() { // ask mentor if global variable significantly affects performance
     while (!apds.colorAvailable()) {
         delay(5);
     }
     apds.readColor(colors[0], colors[1], colors[2], colors[3]); // Updates array
-    colorAutomationDebug(colors);
 }
 
 /*
- * This method sets up the wall sensor.
- */
-void wallAutomationSetup() {
-    irSensor.setFilterRate(1.0f); // Set filter rate to 1.0f (no filtering)
-}
-
-/*
- * This method prints the wall sensor values for debugging purposes.
- */
-void wallAutomationDebug() {
-    cleanTerminal();
-    float distance = irSensor.getDistanceFloat();
-    Console.printf("Distance: %.2f cm\n", distance);
-    delay(100);
-}
-
-/*
- * This method handles the wall sensor automation.
+ * Handles the wall sensor automation.
  */
 void wallAutomation() {
     // Not implemented yet.
-    // wallAutomationDebug();
 }
 
 /*
- * This method handles the mechanical automation.
+ * Handles the mechanical automation.
  */
 void mechanicalAutomation() {
     // Not implemented yet.
 }
 
 /*
- * This method sets up the line following sensors.
+ * Handles the line following automation.
  */
-void lineFollowAutomationSetup() {
+void lineAutomation() {
+    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
+}
+
+//-----------------------------------------------------------------------------------------------//
+//------------------------------------------<< SETUP >>------------------------------------------//
+//-----------------------------------------------------------------------------------------------//
+
+/*
+ * Sets up the line following sensors.
+ */
+void lineSetup() {
     qtr.setTypeAnalog();
     qtr.setSensorPins((const uint8_t[])LINE_FOLLOW_PINS, NUM_LINE_SENSORS);
     calibrateLineSensors(); // Calibrate line sensor
 }
 
 /*
- * This method prints the line sensor values for debugging purposes.
- * @param sensors array of sensor values
+ * Sets up the wall sensor.
  */
-void lineFollowAutomationDebug(uint16_t sensors[]) {
-    cleanTerminal();
-    Console.printf("Line Sensor Values:\n");
-    for (int i = 0; i < NUM_LINE_SENSORS; i++) {
-        Console.printf("%d  ", sensors[i]);
-    }
-    Console.println();
-    delay(100);
+void irSetup() {
+    irSensor.setFilterRate(1.0f); // Set filter rate to 1.0f (no filtering)
 }
 
 /*
- * This method handles the line following automation.
+ * Sets up the color sensor and I2C communication.
  */
-void lineFollowAutomation() {
-    uint16_t sensors[NUM_LINE_SENSORS];
-    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
-    // lineFollowAutomationDebug(sensors);
+void colorSetup() {
+    I2C_0.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_FREQUENCY);
+    apds.setInterruptPin(APDS9960_INT_PIN);
+    apds.begin();
+}
+
+/*
+ * Sets up the motor pins as outputs.
+ */
+void motorSetup() {
+    pinMode(IN1, OUTPUT);
+    pinMode(IN2, OUTPUT); // Are these needed?
+    pinMode(IN3, OUTPUT);
+    pinMode(IN4, OUTPUT);
 }
 
 void setup() {
@@ -270,14 +262,14 @@ void setup() {
     esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
     uni_bt_allowlist_set_enabled(true);
 
-    colorAutomationSetup(); // Setup color sensor
+    colorSetup(); // Setup color sensor
 
     Serial.begin(115200);
 
     pinMode(ONBOARD_LED_PIN, OUTPUT); // Setup LED pin
-    motorPinsSetup(); // Setup motor pins
-    lineFollowAutomationSetup(); // Setup line sensors
-    wallAutomationSetup(); // Setup IR sensor
+    motorSetup(); // Setup motor pins
+    lineSetup(); // Setup line sensors
+    irSetup(); // Setup IR sensor
 }
 
 void loop() {
@@ -297,18 +289,22 @@ void loop() {
                 case 0: // Manual mode
                     moveMotors(myController);
                     moveServo(myController);
+                    // dumpGamepad(myController);
                     break;
                 case 1: // Color mode
                     colorAutomation();
+                    // colorDebug();
                     break;
                 case 2: // Wall mode
                     wallAutomation();
+                    // irDebug();
                     break;
                 case 3: // Mechanical mode
                     mechanicalAutomation();
                     break;
                 case 4: // Line follow mode
-                    lineFollowAutomation();
+                    lineAutomation();
+                    // lineDebug();
                     break;
             }
         }
