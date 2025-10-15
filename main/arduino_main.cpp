@@ -17,16 +17,16 @@
 #define IN1 19 // Right motor pins
 #define IN2 18
 #define IN3 17 // Left motor pins
-#define IN4 16 //         0  1  2  3  4  5  6  7               
-#define LINE_FOLLOW_PINS {0, 0, 0, 0, 0, 0, 0, 0} // place holders for line sensor pins
+#define IN4 16            
+const uint8_t LINE_FOLLOW_PINS[] = {0, 0, 0, 0}; // place holders for line sensor pins
 #define IR_PIN 0 // place holders for IR sensor pins
 #define APDS9960_INT_PIN 0 // place holders for color sensor pins and settings
 #define I2C_SDA_PIN 0
 #define I2C_SCL_PIN 0
 
-const int TOP_MOTOR_SPEED = 255; // max speed of motors
+const uint8_t TOP_MOTOR_SPEED = 255; // max speed of motors
 const int MAX_JOYSTICK_INPUT = 512; // max speed value from controller
-const int NUM_LINE_SENSORS = 8; // number of line sensors
+const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_PINS[0]); // number of line sensors
 const int I2C_FREQUENCY = 100000; // I2C frequency for color sensor
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
@@ -226,7 +226,7 @@ void lineAutomation() {
  */
 void lineSetup() {
     qtr.setTypeAnalog();
-    qtr.setSensorPins((const uint8_t[])LINE_FOLLOW_PINS, NUM_LINE_SENSORS);
+    qtr.setSensorPins(LINE_FOLLOW_PINS, NUM_LINE_SENSORS);
     calibrateLineSensors(); // Calibrate line sensor
 }
 
