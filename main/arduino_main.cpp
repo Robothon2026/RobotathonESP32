@@ -12,13 +12,16 @@
 #include <Wire.h>
 #include <Arduino_APDS9960.h> // Color sensor library
 #include <bits/stdc++.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
 
 #define ONBOARD_LED_PIN 2 // LED pin
 #define IN1 19 // Right motor pins
 #define IN2 18
 #define IN3 17 // Left motor pins
 #define IN4 16            
-const uint8_t LINE_FOLLOW_PINS[] = {0, 0, 0, 0}; // place holders for line sensor pins
+const uint8_t LINE_FOLLOW_PINS[] = {32, 39, 4, 26, 25, 15, 2, 0}; // place holders for line sensor pins
 #define IR_PIN 0 // place holders for IR sensor pins
 #define APDS9960_INT_PIN 0 // place holders for color sensor pins and settings
 #define I2C_SDA_PIN 0
@@ -28,12 +31,16 @@ const uint8_t TOP_MOTOR_SPEED = 255; // max speed of motors
 const int MAX_JOYSTICK_INPUT = 512; // max speed value from controller
 const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_PINS[0]); // number of line sensors
 const int I2C_FREQUENCY = 100000; // I2C frequency for color sensor
+const char* SSID = "yourSSID"; // WiFi SSID
+const char* PASSWORD = "yourPassword"; // WiFi Password
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 QTRSensors qtr;// line
 ESP32SharpIR irSensor(ESP32SharpIR::GP2Y0A21YK0F, IR_PIN);// IR
 TwoWire I2C_0 = TwoWire(0);// color
 APDS9960 apds = APDS9960(I2C_0, APDS9960_INT_PIN);
+WiFiServer telnetServer(23); // Telnet server
+WiFiClient telnetClient; // Telnet client
 
 int currentMode = 0; // current mode for robot
 int colors[4]; // array holding information for r, g, b, a
@@ -47,7 +54,7 @@ uint16_t sensors[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SE
  * Cleans terminal to debug easier.
  */
 void cleanTerminal() {
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 25; i++) {
         Console.println();
     }
 }
@@ -59,10 +66,11 @@ void cleanTerminal() {
 void calibrateLineSensors() {
     for (uint8_t i = 0; i < 250; i++) {
         cleanTerminal();
-        Console.printf("Calibrating %d/250\n", i);
+        Console.printf("Calibrating %d/250\n", i + 1);
         qtr.calibrate();
         delay(20);
     }
+    Console.println("Calibration done!");
 }
 
 /*
@@ -81,6 +89,55 @@ void setMode(ControllerPtr ctl) {
     } else if (ctl->y()) {
         currentMode = 4; // Line follow mode
     }
+}
+
+/*
+ * Connects to wifi.
+ */
+void wifiConnect() {
+    if (telnetServer.hasClient()) {
+        if (!telnetClient || !telnetClient.connected()) {
+            if (telnetClient) telnetClient.stop();
+            telnetClient = telnetServer.available();
+            Serial.println("New Telnet client connected!");
+            telnetClient.println("Welcome to ESP32 Debug!");
+        } else {
+            // Reject additional clients
+            telnetServer.available().stop();
+        }
+    }
+
+    // Example debug info
+    if (telnetClient && telnetClient.connected()) {
+        telnetClient.printf("Sensor value: %d\n", analogRead(34));
+        delay(500);
+    }
+}
+
+/*
+ * Inverts line sensor values to be more intuitive.
+ * 0->black
+ * 1000->white
+ */
+void invertSensors() {
+    for (int i = 0; i < NUM_LINE_SENSORS; i++) {
+        sensors[i] = 1000 - sensors[i]; // Assuming 12-bit ADC, invert the value
+    }
+}
+
+/*
+ * Helper to simplify altMovementMotors.
+ * Takes in four values: left speed f/b, and right speed f,b
+ * @param leftSpeedForward left motor speed forward
+ * @param leftSpeedBackward left motor speed backwards
+ * @param rightSpeedForward right motor speed forward
+ * @param rightSpeedBackward right motor speed backwards
+ */
+void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpeedForward, int rightSpeedBackward) {
+    analogWrite(IN1, leftSpeedForward);
+    analogWrite(IN2, leftSpeedBackward);
+    analogWrite(IN3, rightSpeedForward);
+    analogWrite(IN4, rightSpeedBackward);
 }
 
 //-----------------------------------------------------------------------------------------------//
@@ -135,7 +192,6 @@ void irDebug() {
  */
 void lineDebug() {
     cleanTerminal();
-    Console.printf("Line Sensor Values:\n");
     for (int i = 0; i < NUM_LINE_SENSORS; i++) {
         Console.printf("%d  ", sensors[i]);
     }
@@ -158,13 +214,15 @@ void moveMotors(ControllerPtr ctl) {
     int rY = ctl->axisRY();// Right joystick Y axis
     int aRY = abs(rY) * TOP_MOTOR_SPEED / MAX_JOYSTICK_INPUT; // Adjusted Right joystick Y axis for speed input [0, TOP_MOTOR_SPEED]
 
-    bool lForward = (lY <= 0); // Determine if left joystick is moving forward or backward
-    bool rForward = (rY <= 0); // Determine if right joystick is moving forward or backward
+    bool lForward = (lY <= -200); // Determine if left joystick is moving forward
+    bool lBackward = (lY >= 200); // Determine if left joystick is moving backward
+    bool rForward = (rY <= -200);
+    bool rBackward = (rY >= 200);
 
     if (lForward) { // if left joystick is forward, move motor forward at adjusted speed
         analogWrite(IN1, aLY);
         analogWrite(IN2, 0);
-    } else { // else, move motor backwards at adjusted speed
+    } else if (lBackward) { // else, move motor backwards at adjusted speed
         analogWrite(IN1, 0);
         analogWrite(IN2, aLY);
     }
@@ -172,9 +230,55 @@ void moveMotors(ControllerPtr ctl) {
     if (rForward) { // if right joystick is forward, move motor forward at adjusted speed
         analogWrite(IN3, aRY);
         analogWrite(IN4, 0);
-    } else { // else, move motor backwards at adjusted speed
+    } else if (rBackward) { // else, move motor backwards at adjusted speed
         analogWrite(IN3, 0);
         analogWrite(IN4, aRY);
+    }
+}
+
+/*
+ * Handles the movement of the robot differently than main.
+ * Left joystick controls both motors and the right joystick turns it to one direction.
+ * @param ctl pointer to controller
+ */
+void altMoveMotors(ControllerPtr ctl) {
+    int lY = ctl->axisY(); // left joystick y-value
+    int aLY = abs(lY) * TOP_MOTOR_SPEED / MAX_JOYSTICK_INPUT; // adjusted value
+    int rX = ctl->axisRX(); // right joystick x-value
+    int aRX = abs(rX) * TOP_MOTOR_SPEED / MAX_JOYSTICK_INPUT; // adjusted value
+    bool lT = ctl->l2();
+    bool rT = ctl->r2(); // not used most of the time. Ask mentor if this will affect performance
+
+    int motorAdjustment = max(0, aLY - aRX); // adjusts motors for either side
+    bool forward = (lY <= -200);
+    bool backward = (lY >= 200);
+    bool left = (rX <= -30);
+    bool right = (rX >= 30);
+
+    if (forward) {
+        if (left) {
+            moveMotorsHelper(motorAdjustment,0, aLY, 0);
+        } else if (right) {
+            moveMotorsHelper(aLY, 0, motorAdjustment, 0);
+        } else {
+            moveMotorsHelper(aLY, 0, aLY, 0);
+        }
+    } else if (backward) {
+        if (left) {
+            moveMotorsHelper(0, motorAdjustment, 0, aLY);
+        } else if (right) {
+            moveMotorsHelper(0, aLY, 0, motorAdjustment);
+        } else {
+            moveMotorsHelper(0, aLY, 0, aLY);
+        }
+    } else { // left joystick netural (within -200, 200)
+        if (lT) { // spin counter-clockwise
+            moveMotorsHelper(0, TOP_MOTOR_SPEED, TOP_MOTOR_SPEED, 0);
+        } else if (rT) { // spin clockwise
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED);
+        } else { // standstill
+            moveMotorsHelper(0, 0, 0, 0);
+        }
     }
 }
 
@@ -215,6 +319,16 @@ void mechanicalAutomation() {
  */
 void lineAutomation() {
     qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
+    invertSensors(); // Invert sensor values for easier debugging
+    int sensor1 = sensors[1];
+    int sensor6 = sensors[6];
+    if (sensor1 < 250) { // left sensor on black, turn left
+        moveMotorsHelper(0, TOP_MOTOR_SPEED / 2, TOP_MOTOR_SPEED / 2, 0);
+    } else if (sensor6 < 250) { // right sensor on black, turn right
+        moveMotorsHelper(TOP_MOTOR_SPEED / 2, 0, 0, TOP_MOTOR_SPEED / 2);
+    } else { // not sensing anything, move forwards
+        moveMotorsHelper(TOP_MOTOR_SPEED / 2, 0, TOP_MOTOR_SPEED, 0);
+    }
 }
 
 //-----------------------------------------------------------------------------------------------//
@@ -251,9 +365,20 @@ void colorSetup() {
  */
 void motorSetup() {
     pinMode(IN1, OUTPUT);
-    pinMode(IN2, OUTPUT); // Are these needed?
+    pinMode(IN2, OUTPUT);
     pinMode(IN3, OUTPUT);
     pinMode(IN4, OUTPUT);
+}
+
+
+void wifiConnectSetup() {
+    WiFi.begin(SSID, PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+    }
+    Serial.println(WiFi.localIP());
+    telnetServer.begin();
+    telnetServer.setNoDelay(true);
 }
 
 void setup() {
@@ -270,6 +395,7 @@ void setup() {
     motorSetup(); // Setup motor pins
     lineSetup(); // Setup line sensors
     irSetup(); // Setup IR sensor
+    //wifiConnectSetup(); // Setup WiFi connection
 }
 
 void loop() {
@@ -278,33 +404,36 @@ void loop() {
     
     // Loop code will only run if controller is connected.
     for (auto myController : myControllers) { // Only execute code when controller is connected
-        if (myController && myController->isConnected() && myController->hasData()) {   
+        if (myController && myController->isConnected() && myController->hasData()) {
+            // wifiConnect(); // Handle WiFi connections
             setMode(myController); // Set current mode based on controller input
 
             // zr shooting sequence: spin launch motor, delay, spin the servo to allow ball in.
             // zl intake sequence: spins motor to intake balls
             // d pad to pivot up and down shooter
-
+            Console.print("Current mode: ");
+            Console.println(currentMode);
             switch (currentMode) {
                 case 0: // Manual mode
+                    // altMoveMotors(myController);
                     moveMotors(myController);
                     moveServo(myController);
-                    // dumpGamepad(myController);
+                    dumpGamepad(myController);
                     break;
                 case 1: // Color mode
-                    colorAutomation();
+                    //colorAutomation();
                     // colorDebug();
                     break;
                 case 2: // Wall mode
-                    wallAutomation();
+                    //wallAutomation();
                     // irDebug();
                     break;
                 case 3: // Mechanical mode
-                    mechanicalAutomation();
+                    //mechanicalAutomation();
                     break;
                 case 4: // Line follow mode
                     lineAutomation();
-                    // lineDebug();
+                    lineDebug();
                     break;
             }
         }
