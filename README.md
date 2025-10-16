@@ -1,9 +1,17 @@
 # Robotathon ESP32
 
-Hello!
+----WiFi connection----
+Steps to connect to WiFi (not tested)
+1. Change SSID and PASSWORD on the top of the file
+2. Uncomment wifiConnectionSetup() and wifiConnection()
+3. ctrl+f and replace "Console" with "telnetClient"
+4. Find ip of esp32 after connection via the console. (this will change for different wifi connections)
+4. Windows: enable telnet client in settings, open terminal and enter telnet {ip} 23
+   Linux/mac: open terminal and enter telnet {ip} 23
 
-This repository serves as the template codebase for Robotathon teams.
-
-In this branch, you will find all the files necessary for an ESP32 project configured with all the required libraries for Robotathon (Arduino core and BluePad32 libraries).
-
-Teams are welcome to modify anything and everything! The only restriction is your creativity :)
+----Alternative Movement----
+There are two different movement styles. Test both and see which feels better overall. 
+1. Left joystick->left motor (current)
+   Right joystick->right motor
+2. Left joystick->both motors (commented out)
+   Right joystick-> adjusts one side depending on x position
