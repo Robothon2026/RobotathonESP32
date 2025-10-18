@@ -33,6 +33,15 @@ const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_P
 const int I2C_FREQUENCY = 100000; // I2C frequency for color sensor
 const char* SSID = "yourSSID"; // WiFi SSID
 const char* PASSWORD = "yourPassword"; // WiFi Password
+// --- PID CONTROL VARIABLES (Add these to your global section) ---
+const int SETPOINT = 0; // The desired position (center of line)
+// TUNE THESE: Start with Kd=0 and Ki=0, then tune Kp, then Kd, then Ki.
+float Kp = 0.5;   // Proportional Gain have to tune if wrong
+float Ki = 0.00;  // Integral Gain have to tune if wrong
+float Kd = 10.0;  // Derivative Gain have to tune if wrong
+
+float integral = 0;     // Accumulator for integral term
+int lastError = 0;      // Stores error for derivative term
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 QTRSensors qtr;// line
@@ -49,6 +58,49 @@ uint16_t sensors[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SE
 //-----------------------------------------------------------------------------------------------//
 //-----------------------------------------<< HELPERS >>-----------------------------------------//
 //-----------------------------------------------------------------------------------------------//
+
+/*
+ * Reads the 8 line sensors and calculates the continuous position of the line.
+ * The position ranges from -3500 (far left) to +3500 (far right) with 0 being the center.
+ * This is designed for a black line (value 0) on a white surface (value 1000).
+ * @return The calculated continuous line position.
+ */
+int readLinePosition() {
+    // Read the sensors (QTR library handles raw read/calibration)
+    // qtr.readLine() typically returns a position, but we need the raw sensors[] array first.
+    qtr.read(sensors); 
+
+    // The weights assigned to each sensor: from left (negative) to right (positive)
+    // Using a range like -3500 to +3500 is common to ensure a continuous integer range.
+    // NOTE: Adjust these weights if your line width/sensor spacing is unusual.
+    int weights[NUM_LINE_SENSORS] = {-3500, -2500, -1500, -500, 500, 1500, 2500, 3500}; 
+
+    long weightedSum = 0;
+    long sumOfInvertedReadings = 0;
+    
+    // Invert the sensor logic for black line (0) on white background (1000).
+    //  (close to 1000) is the background (no line).
+    //  (close to 0) is the line.
+    // We want the line to have a high contribution to the sum, so we use (1000 - sensor[i]).
+    for (int i = 0; i < NUM_LINE_SENSORS; i++) {
+        // inverted value to correctly weigh the position.
+        int invertedReading = 1000 - sensors[i]; 
+
+        sumOfInvertedReadings += invertedReading;
+        weightedSum += (long)invertedReading * weights[i];
+    }
+    
+    // If the robot is completely off the line, the sumOfInvertedReadings will be near zero.
+    if (sumOfInvertedReadings == 0) {
+        // Go staright
+        return 0; 
+    }
+    
+    // Calculate the weighted average.
+    int position = weightedSum / sumOfInvertedReadings;
+
+    return position; // Returns a value from -3500 (Line on Left) to +3500 (Line on Right)
+}
 
 /*
  * Cleans terminal to debug easier.
@@ -318,17 +370,48 @@ void mechanicalAutomation() {
  * Handles the line following automation.
  */
 void lineAutomation() {
-    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
-    invertSensors(); // Invert sensor values for easier debugging
-    int sensor1 = sensors[1];
-    int sensor6 = sensors[6];
-    if (sensor1 < 250) { // left sensor on black, turn left
-        moveMotorsHelper(0, TOP_MOTOR_SPEED / 2, TOP_MOTOR_SPEED / 2, 0);
-    } else if (sensor6 < 250) { // right sensor on black, turn right
-        moveMotorsHelper(TOP_MOTOR_SPEED / 2, 0, 0, TOP_MOTOR_SPEED / 2);
-    } else { // not sensing anything, move forwards
-        moveMotorsHelper(TOP_MOTOR_SPEED / 2, 0, TOP_MOTOR_SPEED, 0);
-    }
+    int position = readLinePosition(); // Position: -3500 (Left) to +3500 (Right)
+
+    // Error = Setpoint - Position (Error = 0 - Position = -Position)
+    int currentError = SETPOINT - position; 
+
+    // 2. CALCULATE PID TERMS
+    
+    // P-Term: Proportional to current error
+    float P = Kp * currentError; 
+
+    // I-Term: Accumulation of error over time
+    integral += currentError; 
+    float I = Ki * integral;
+
+    // D-Term: Rate of change of the error
+    float derivative = currentError - lastError;
+    float D = Kd * derivative;
+
+    // 3. CALCULATE TOTAL CORRECTION
+    float PID_Correction = P + I + D;
+    lastError = currentError; // Store the current error for the next iteration
+    
+    // The robot will move at a BASE_SPEED (e.g., TOP_MOTOR_SPEED / 2).
+    // The PID_Correction is ADDED to one motor and SUBTRACTED from the other.
+    
+    // The correction is applied to steer the robot back to the center (0).
+    // If Error > 0 (Line on Left), Correction > 0.
+    //   -> Left Motor Speed is increased to turn Left.
+    //   -> Right Motor Speed is decreased to turn Left.
+    
+    // Base speed is lower value for turning adjustments.
+    const int BASE_SPEED = TOP_MOTOR_SPEED / 2; 
+    
+    int leftMotorSpeed = BASE_SPEED + (int)PID_Correction;
+    int rightMotorSpeed = BASE_SPEED - (int)PID_Correction; 
+
+    // Clamp the speeds to prevent exceeding the max PWM value
+    //leftMotorSpeed = constrain(leftMotorSpeed, 0, TOP_MOTOR_SPEED);
+    //rightMotorSpeed = constrain(rightMotorSpeed, 0, TOP_MOTOR_SPEED);
+
+
+    moveMotorsHelper(leftMotorSpeed, 0, rightMotorSpeed, 0);
 }
 
 //-----------------------------------------------------------------------------------------------//
