@@ -45,12 +45,35 @@ WiFiClient telnetClient; // Telnet client
 int currentMode = 0; // current mode for robot
 int colors[4]; // array holding information for r, g, b, a
 uint16_t sensors[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SENSORS
-int division = 3; // divide the speed by 3 for line following mode
-float correctionforline = 1; // correction incase of overshooting the line back
-int counterforline = 0; // manual counter for line following adjustments
+int kP= 0.5; // proportional constant for line following
+int kD = 0; // derivative constant for line following
+int kI = 0; // integral constant for line following
+int lastEror = 0; // last error for derivative calculation
+int sum = 0; // sum of errors for integral calculation
+
 //-----------------------------------------------------------------------------------------------//
 //-----------------------------------------<< HELPERS >>-----------------------------------------//
 //-----------------------------------------------------------------------------------------------//
+
+int lineHelper() {
+    qtr.readLineBlack(sensors);
+    int Error = 0; // used to calculate the error from the line
+    int weights[] = {-3, -2, -1, 0, 0, 1, 2, -3}; // Adjust weights based on number of sensors
+    for(int i = 0; i < NUM_LINE_SENSORS; i++) { // for loop to go through all sensors
+        Error = sensors[i] * weights[i]; // calculates the weighted error with the value of the sensor                 
+    }                                       // example: if leftmost sensor is on black (1000) and all others are white (0)
+                                            // then error = 0 * -3 + 1,000 * -2 +  1,000 * -1 + 0 * 0 + 0* 0 + 0 * 1 + 0 * 2 + 0 * 3 = -3000
+    Error = Error / 1000; // Normalize error by diving by the highest sensor value that is 1000;
+    int P = kP * Error; // equation for the porpotional term for the immediate correction
+    int D = kD * (Error - lastEror); // equation for the derivative term for appliying a small brake on the porpotional term
+    sum = sum + Error; // sum of all errors up to now for integral term to use to track long term errors over the course
+    int I = kI * sum; // equation for the integral term to correct for long term error and apply small amount of correction
+                      // The integral term is very small and only affects the robot if a long and difficult course
+                      // I think the integral is optional if we want speed but we would have to test  
+    lastEror = Error; // Store current error for the next calculation for the derivative term 
+    return P + D + I; // returnt the added up corrections into one value
+}
+
 /*
  * Cleans terminal to debug easier.
  */
@@ -142,70 +165,8 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
 }
 //----------------------------------------FABIAN'S ALGORITHIM------------------------------------//
 //calculates multiplier based on which sensor is activated
-float multiplier(int sensor){
-    float multiplier = 1; // default multiplier
-    //correction incase of overshooting or undershooting the line
-    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
-    invertSensors(); // Invert sensor values for easier debugging
-    for(int i = 0; i < NUM_LINE_SENSORS; i++) { //loop through all sensor
-        if (sensor == 7 || sensor== 0){// if far right or far left sensor on black
-        multiplier = 3 * correctionforline;                         // highest mulitplier
-        counterforline += 1;                        
-    } else if (sensor == 1 || sensor == 6 ){ // if right or left sensor on black
-        multiplier =  2 * correctionforline;                        // medium multiplier
-        counterforline += 1;
-    } else if (sensor == 2 || sensor == 5 ){// if slight right or slight left sensor on black
-        multiplier = 1 * correctionforline;                  // lowest multiplier
-        counterforline += 1;
-    } 
-    }
-    
-    return multiplier;
-}
-//checks if robot is on line
-boolean onLine(){
-    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
-    invertSensors(); // Invert sensor values for easier debugging
-    int middlesensorL = sensors[3]; // middle left sensor
-    int middlesensorR = sensors[4]; // middle right sensor
-     if(middlesensorL > 200 && middlesensorR > 200){ // if both middle sensors detect black
-        return true; //on line
-    }
-    return false; //not on line
-}
 
-//moves robot according to which side the line is detected on
-void AdjustToLine(int speed){
-    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
-    invertSensors(); // Invert sensor values for easier debugging
-    int leftside = 3 ;// size of left side sensors excluding middle
-    int rightside = NUM_LINE_SENSORS / 2;// size of right side sensors excluding middle
-    int p = 0;
-    int k = 0;
-    for(int i = 0; i < leftside; i++) {
-        p = sensors[i];
-        if(p < 300){
-            int multi = multiplier(i);
-            moveMotorsHelper(0, speed, speed * multi, 0); //turn left according to which sensor flared up;
-        }
-    }
-    for (int i = NUM_LINE_SENSORS - 1; i > rightside; i--){
-        k = sensors[i];
-        if(k < 300){
-            int multi = multiplier(k);
-            moveMotorsHelper(speed * multi, 0, 0, speed); //turn right according to which sensor flared up;
-        }
-    }
-}
 
-//adjusts correction variable based on how long robot has been off line
-void correctionforLineSensor(){
-    if(counterforline > 20){ //if counter exceeds 20, decrease correction slightly
-        correctionforline -= 0.01;
-    } if(counterforline > 40){ //if counter exceeds 40, decrease correction slightly more
-        correctionforline -= 0.03;
- }
-}
 
 
 //-----------------------------------------------------------------------------------------------//
@@ -387,13 +348,18 @@ void mechanicalAutomation() {
  */
 void lineAutomation() {
     //Fabian's ALGORITHIM
-    int speed = TOP_MOTOR_SPEED / division;
-    correctionforLineSensor();
-    if(!onLine()){
-        AdjustToLine(speed);
-    } else if(onLine()){
-        moveMotorsHelper(speed, 0, speed, 0);
-    }
+    int speed = TOP_MOTOR_SPEED; // top speed of motors
+    int correction = lineHelper(); // The correction for the lineHelper that will fix the robot's path
+    moveMotorsHelper(speed + correction ,0 ,speed - correction ,0); // move motors with correction applied to speed
+    /* if correction is negative, move left by adjusting the left wheel slower while adjusitng the right wheel faster
+    if correction is positive, move right by adjusting the right wheel slower while adjusitng the left wheel faster
+    if correction is zero, move straight forward at full speed
+    I decided to not use the invert sensors function because it is easers to just use 1,000 for black and 0 for white
+    as if i use it the other way i would have to invert everything and also i wouldn't know how that would be able to work becuase
+    right now the lineHelper function works by multiplying the sensor values by the weights but if its 1,000 in the middle and 0 on white
+    then the error would go based off the middle which i dont think would be as effecient and just more complicated then using 0
+    for white and 1,000 for black
+    */
 }
 
 //-----------------------------------------------------------------------------------------------//
