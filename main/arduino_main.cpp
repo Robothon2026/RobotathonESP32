@@ -33,6 +33,15 @@ const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_P
 const int I2C_FREQUENCY = 100000; // I2C frequency for color sensor
 const char* SSID = "yourSSID"; // WiFi SSID
 const char* PASSWORD = "yourPassword"; // WiFi Password
+const int MANUAL = 0;
+const int COLOR_AUTOMATION = 1;
+const int WALL_AUTOMATION = 2;
+const int MECHANICAL_AUTOMATION = 3;
+const int LINE_AUTOMATION = 4;
+const int RED = 0;
+const int GREEN = 1;
+const int BLUE = 2;
+const int ALPHA = 3; // switch to u_int8_t later on
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 QTRSensors qtr;// line
@@ -103,15 +112,15 @@ void calibrateLineSensors() {
  */
 void setMode(ControllerPtr ctl) {
     if (ctl->dpad()) {
-        currentMode = 0; // Manual mode
+        currentMode = MANUAL; // Manual mode
     } else if (ctl->b()) {
-        currentMode = 1; // Color mode
+        currentMode = COLOR_AUTOMATION; // Color mode
     } else if (ctl->a()) {
-        currentMode = 2; // Wall mode
+        currentMode = WALL_AUTOMATION; // Wall mode
     } else if (ctl->x()) {
-        currentMode = 3; // Mechanical mode
+        currentMode = MECHANICAL_AUTOMATION; // Mechanical mode
     } else if (ctl->y()) {
-        currentMode = 4; // Line follow mode
+        currentMode = LINE_AUTOMATION; // Line follow mode
     }
 }
 
@@ -166,16 +175,15 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
 
 /*
  * Helper to find specific color
- * 0: red 1: green 2: blue
+ * 0: red 1: orange 2: yellow 3: green 4: blue 5: violet
  * @return number associated with color
  */
-int sampleColors() {
-    // return the index of the largest value color in array
-    apds.readColor(colors[0], colors[1], colors[2], colors[3]);
-    int tempMaxColor = max(colors[0], colors[1]);
-    int maxColor = max(tempMaxColor, colors[2]);
+int recordColor() {
+    apds.readColor(colors[RED], colors[GREEN], colors[BLUE], colors[ALPHA]); // update array
+    int maxColor = (max(colors[RED], colors[GREEN]), colors[BLUE]);
     int numColors = 3;
-    for (int i = 0; i < numColors - 1; i++) {
+    // loop through colors until you find the index of the largest value
+    for (int i = 0; i < numColors; i++) {
         if (colors[i] == maxColor) {
             return i;
         }
@@ -183,14 +191,18 @@ int sampleColors() {
     return -1;
 }
 
+/*
+ * Waits for right trigger input to sample color.
+ * @param ctl controller pointer
+ * @return sampleColor 
+ */
 int waitToSample(ControllerPtr ctl) {
     int sampleColor = -1;
-    while (sampleColor == -1 && currentMode == 1) {
-        setMode(ctl);
-        // wait for right trigger to sample color
+    while (sampleColor == -1 && currentMode == COLOR_AUTOMATION) { // while not found and in mode
+        setMode(ctl); // allows exit
         int leftTrigger = ctl->r2();
-        if (leftTrigger == 1) {
-            sampleColor = sampleColors();
+        if (leftTrigger == 1) { // if left trigger triggered, sample color might work without == 1 (test)
+            sampleColor = recordColor();
         }
     }
     return sampleColor;
@@ -229,7 +241,7 @@ void dumpGamepad(ControllerPtr ctl) {
  */
 void colorDebug() {
     cleanTerminal();
-    Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colors[0], colors[1], colors[2], colors[3]);
+    Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colors[RED], colors[GREEN], colors[BLUE], colors[ALPHA]);
     delay(100);
 }
 
@@ -354,9 +366,9 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
     int currentColor = sampleColor; // current color; just initializing
     bool checkInitial = false; // value to check if we moved off the color
     bool colorFound = false; // value to check if we found the color again
-    while (!(checkInitial && colorFound) && currentMode == 1) { // while both checkInitial and colorFound aren't true...
-        setMode(ctl);
-        currentColor = sampleColors(); // get currentColor
+    while (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) { // while both checkInitial and colorFound aren't true
+        setMode(ctl); // allows exit within loop
+        currentColor = recordColor(); // get current Color
         colorFound = false; // set equal to false to reiterate
         if (currentColor != sampleColor) { // if we moved off the sampled color
             checkInitial = true;
@@ -443,7 +455,9 @@ void motorSetup() {
     pinMode(IN4, OUTPUT);
 }
 
-
+/*
+ * Initial wifi setup and starts telnet
+ */
 void wifiConnectSetup() {
     WiFi.begin(SSID, PASSWORD);
     while (WiFi.status() != WL_CONNECTED) {
@@ -459,11 +473,8 @@ void setup() {
     BP32.forgetBluetoothKeys(); 
     esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
     uni_bt_allowlist_set_enabled(true);
-
     colorSetup(); // Setup color sensor
-
     Serial.begin(115200);
-
     pinMode(ONBOARD_LED_PIN, OUTPUT); // Setup LED pin
     motorSetup(); // Setup motor pins
     lineSetup(); // Setup line sensors
@@ -480,31 +491,31 @@ void loop() {
         if (myController && myController->isConnected() && myController->hasData()) {
             // wifiConnect(); // Handle WiFi connections
             setMode(myController); // Set current mode based on controller input
-
+                                   // If to inefficient, create loops within each case and handle exiting internally
             // zr shooting sequence: spin launch motor, delay, spin the servo to allow ball in.
             // zl intake sequence: spins motor to intake balls
             // d pad to pivot up and down shooter
             Console.print("Current mode: ");
             Console.println(currentMode);
             switch (currentMode) {
-                case 0: // Manual mode
+                case MANUAL: // Manual mode
                     // altMoveMotors(myController);
                     moveMotors(myController);
                     moveServo(myController);
                     dumpGamepad(myController);
                     break;
-                case 1: // Color mode
+                case COLOR_AUTOMATION: // Color mode
                     colorAutomation(myController);
                     // colorDebug();
                     break;
-                case 2: // Wall mode
+                case WALL_AUTOMATION: // Wall mode
                     //wallAutomation();
                     // irDebug();
                     break;
-                case 3: // Mechanical mode
+                case MECHANICAL_AUTOMATION: // Mechanical mode
                     //mechanicalAutomation();
                     break;
-                case 4: // Line follow mode
+                case LINE_AUTOMATION: // Line follow mode
                     lineAutomation();
                     // lineDebug();
                     break;

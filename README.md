@@ -15,3 +15,14 @@ There are two different movement styles. Test both and see which feels better ov
    Right joystick->right motor
 2. Left joystick->both motors (commented out)
    Right joystick-> adjusts one side depending on x position
+
+----Color Automation----
+How to control
+1. Switch to color automation.
+2. Put robot over sample color.
+3. Click right trigger. 
+4. It will continue to move until it finds the color again.
+
+----Notes----
+1. Make sure you can switch to manual control whenever you want. This wil put you into an infinite loop otherwise in case of a bug.
+2. Adjust color offset delay o robot is over the color.
