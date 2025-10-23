@@ -163,11 +163,38 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
     analogWrite(IN3, rightSpeedForward);
     analogWrite(IN4, rightSpeedBackward);
 }
-//----------------------------------------FABIAN'S ALGORITHIM------------------------------------//
-//calculates multiplier based on which sensor is activated
 
+/*
+ * Helper to find specific color
+ * 0: red 1: green 2: blue
+ * @return number associated with color
+ */
+int sampleColors() {
+    // return the index of the largest value color in array
+    apds.readColor(colors[0], colors[1], colors[2], colors[3]);
+    int tempMaxColor = max(colors[0], colors[1]);
+    int maxColor = max(tempMaxColor, colors[2]);
+    int numColors = 3;
+    for (int i = 0; i < numColors - 1; i++) {
+        if (colors[i] == maxColor) {
+            return i;
+        }
+    }
+    return -1;
+}
 
-
+int waitToSample(ControllerPtr ctl) {
+    int sampleColor = -1;
+    while (sampleColor == -1 && currentMode == 1) {
+        setMode(ctl);
+        // wait for right trigger to sample color
+        int leftTrigger = ctl->r2();
+        if (leftTrigger == 1) {
+            sampleColor = sampleColors();
+        }
+    }
+    return sampleColor;
+}
 
 //-----------------------------------------------------------------------------------------------//
 //------------------------------------------<< DEBUG >>------------------------------------------//
@@ -322,11 +349,26 @@ void moveServo(ControllerPtr ctl) {
 /*
  * Handles the color sensor automation setup.
  */
-void colorAutomation() { // ask mentor if global variable significantly affects performance
-    while (!apds.colorAvailable()) {
-        delay(5);
+void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable significantly affects performance
+    int sampleColor = waitToSample(ctl); // helper that waits until right trigger is pulled to store sample color
+    int currentColor = sampleColor; // current color; just initializing
+    bool checkInitial = false; // value to check if we moved off the color
+    bool colorFound = false; // value to check if we found the color again
+    while (!(checkInitial && colorFound) && currentMode == 1) { // while both checkInitial and colorFound aren't true...
+        setMode(ctl);
+        currentColor = sampleColors(); // get currentColor
+        colorFound = false; // set equal to false to reiterate
+        if (currentColor != sampleColor) { // if we moved off the sampled color
+            checkInitial = true;
+        }
+        if (currentColor == sampleColor) { // if we found the color again
+            colorFound = true;
+        }
+        moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0); // move forward
     }
-    apds.readColor(colors[0], colors[1], colors[2], colors[3]); // Updates array
+
+    delay(100); // change delay offset time so robot 
+    moveMotorsHelper(0, 0, 0, 0); // stop robot
 }
 
 /*
@@ -452,7 +494,7 @@ void loop() {
                     dumpGamepad(myController);
                     break;
                 case 1: // Color mode
-                    //colorAutomation();
+                    colorAutomation(myController);
                     // colorDebug();
                     break;
                 case 2: // Wall mode
@@ -464,7 +506,7 @@ void loop() {
                     break;
                 case 4: // Line follow mode
                     lineAutomation();
-                    lineDebug();
+                    // lineDebug();
                     break;
             }
         }
