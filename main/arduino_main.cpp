@@ -17,59 +17,73 @@
 #include <WebServer.h>
 
 #define ONBOARD_LED_PIN 2 // LED pin
+
 #define IN1 19 // Right motor pins
 #define IN2 18
 #define IN3 17 // Left motor pins
 #define IN4 16            
 const uint8_t LINE_FOLLOW_PINS[] = {32, 39, 4, 26, 25, 15, 2, 0}; // place holders for line sensor pins
-#define IR_PIN 0 // place holders for IR sensor pins
+#define LEFT_IR_PIN 0 // place holders for IR sensor pins
+#define FRONT_IR_PIN 0
+#define RIGHT_IR_PIN 0 
 #define APDS9960_INT_PIN 0 // place holders for color sensor pins and settings
 #define I2C_SDA_PIN 0
 #define I2C_SCL_PIN 0
 
 const uint8_t TOP_MOTOR_SPEED = 255; // max speed of motors
 const int MAX_JOYSTICK_INPUT = 512; // max speed value from controller
-const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_PINS[0]); // number of line sensors
+const uint8_t NUM_COLORS = 4;
+const uint8_t NUM_LINE_SENSORS = 8;
+const uint8_t NUM_IR_SENSORS = 3;
 const int I2C_FREQUENCY = 100000; // I2C frequency for color sensor
 const char* SSID = "yourSSID"; // WiFi SSID
 const char* PASSWORD = "yourPassword"; // WiFi Password
 const int MANUAL = 0;
 const int COLOR_AUTOMATION = 1;
 const int WALL_AUTOMATION = 2;
-const int MECHANICAL_AUTOMATION = 3;
-const int LINE_AUTOMATION = 4;
+const int LINE_AUTOMATION = 3;
 const int RED = 0;
 const int GREEN = 1;
 const int BLUE = 2;
 const int ALPHA = 3; // switch to u_int8_t later on
 
+const int TIME_90_DEGREES = 0; // CHANGE AS NEEDED 
+const int TIME_180_DEGREES = TIME_90_DEGREES * 2;
+
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 QTRSensors qtr;// line
-ESP32SharpIR irSensor(ESP32SharpIR::GP2Y0A21YK0F, IR_PIN);// IR
+ESP32SharpIR leftIRSensor(ESP32SharpIR::GP2Y0A21YK0F, LEFT_IR_PIN);
+ESP32SharpIR frontIRSensor(ESP32SharpIR::GP2Y0A21YK0F, FRONT_IR_PIN);
+ESP32SharpIR rightIRSensor(ESP32SharpIR::GP2Y0A21YK0F, RIGHT_IR_PIN);
 TwoWire I2C_0 = TwoWire(0);// color
 APDS9960 apds = APDS9960(I2C_0, APDS9960_INT_PIN);
 WiFiServer telnetServer(23); // Telnet server
 WiFiClient telnetClient; // Telnet client
 
 int currentMode = 0; // current mode for robot
-int colors[4]; // array holding information for r, g, b, a
-uint16_t sensors[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SENSORS
+int colorArray[NUM_COLORS]; // array holding information for r, g, b, a
+uint16_t lineArray[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SENSORS
+float irArray[NUM_IR_SENSORS]; // L F R
 int kP= 0.5; // proportional constant for line following
 int kD = 0; // derivative constant for line following
 int kI = 0; // integral constant for line following
 int lastEror = 0; // last error for derivative calculation
 int sum = 0; // sum of errors for integral calculation
 
+void updateLine();
+void updateColor();
+void updateIR();
+
 //-----------------------------------------------------------------------------------------------//
 //-----------------------------------------<< HELPERS >>-----------------------------------------//
 //-----------------------------------------------------------------------------------------------//
 
 int lineHelper() {
-    qtr.readLineBlack(sensors);
+    updateLine();
     int Error = 0; // used to calculate the error from the line
     int weights[] = {-3, -2, -1, 0, 0, 1, 2, -3}; // Adjust weights based on number of sensors
     for(int i = 0; i < NUM_LINE_SENSORS; i++) { // for loop to go through all sensors
-        Error = sensors[i] * weights[i]; // calculates the weighted error with the value of the sensor                 
+        Error = lineArray[i] * weights[i]; // calculates the weighted error with the value of the sensor                 
     }                                       // example: if leftmost sensor is on black (1000) and all others are white (0)
                                             // then error = 0 * -3 + 1,000 * -2 +  1,000 * -1 + 0 * 0 + 0* 0 + 0 * 1 + 0 * 2 + 0 * 3 = -3000
     Error = Error / 1000; // Normalize error by diving by the highest sensor value that is 1000;
@@ -111,17 +125,15 @@ void calibrateLineSensors() {
  * @param ctl pointer to controller
  */
 void setMode(ControllerPtr ctl) {
-    if (ctl->dpad()) {
+    if (ctl->b()) {
         currentMode = MANUAL; // Manual mode
-    } else if (ctl->b()) {
-        currentMode = COLOR_AUTOMATION; // Color mode
     } else if (ctl->a()) {
-        currentMode = WALL_AUTOMATION; // Wall mode
+        currentMode = COLOR_AUTOMATION; // Color mode
     } else if (ctl->x()) {
-        currentMode = MECHANICAL_AUTOMATION; // Mechanical mode
+        currentMode = WALL_AUTOMATION; // Wall mode
     } else if (ctl->y()) {
-        currentMode = LINE_AUTOMATION; // Line follow mode
-    }
+        currentMode = LINE_AUTOMATION; // Line mode
+    } 
 }
 
 /*
@@ -154,7 +166,7 @@ void wifiConnect() {
  */
 void invertSensors() {
     for (int i = 0; i < NUM_LINE_SENSORS; i++) {
-        sensors[i] = 1000 - sensors[i]; // Assuming 12-bit ADC, invert the value
+        lineArray[i] = 1000 - lineArray[i]; // Assuming 12-bit ADC, invert the value
     }
 }
 
@@ -175,38 +187,69 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
 
 /*
  * Helper to find specific color
- * 0: red 1: orange 2: yellow 3: green 4: blue 5: violet
+ * 0: red 1: green 2: blue
  * @return number associated with color
  */
 int recordColor() {
-    apds.readColor(colors[RED], colors[GREEN], colors[BLUE], colors[ALPHA]); // update array
-    int maxColor = (max(colors[RED], colors[GREEN]), colors[BLUE]);
-    int numColors = 3;
+    updateColor();
+    int maxColor = -1;
     // loop through colors until you find the index of the largest value
-    for (int i = 0; i < numColors; i++) {
-        if (colors[i] == maxColor) {
-            return i;
+    for (int i = 0; i < NUM_COLORS - 1; i++) {
+        if (colorArray[i] > maxColor) {
+            maxColor = i;
         }
     }
-    return -1;
+    return maxColor;
 }
 
 /*
- * Waits for right trigger input to sample color.
- * @param ctl controller pointer
- * @return sampleColor 
+ * Updates irArray with new values.
+ * 10-80 cm
  */
-int waitToSample(ControllerPtr ctl) {
-    int sampleColor = -1;
-    while (sampleColor == -1 && currentMode == COLOR_AUTOMATION) { // while not found and in mode
-        setMode(ctl); // allows exit
-        int leftTrigger = ctl->r2();
-        if (leftTrigger == 1) { // if left trigger triggered, sample color might work without == 1 (test)
-            sampleColor = recordColor();
-        }
-    }
-    return sampleColor;
+void updateIR() {
+    irArray[0] = leftIRSensor.getDistanceFloat();
+    irArray[1] = frontIRSensor.getDistanceFloat();
+    irArray[2] = rightIRSensor.getDistanceFloat();
 }
+
+/*
+ * Updates colorArray with new values.
+ */
+void updateColor() {
+    apds.readColor(colorArray[RED], colorArray[GREEN], colorArray[BLUE], colorArray[ALPHA]);
+}
+
+/*
+ * Updates lineArray with new values.
+ */
+void updateLine() {
+    qtr.readLineBlack(lineArray);
+}
+
+/*
+ * Rotates robot 90 degrees clockwise.
+ */
+void rotate90CW() {
+        moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED);
+        delay(TIME_90_DEGREES);
+}
+
+/*
+ * Rotates robot 90 degrees counter clockwise.
+ */
+void rotate90CCW() {
+    moveMotorsHelper(0, TOP_MOTOR_SPEED, TOP_MOTOR_SPEED, 0);
+    delay(TIME_90_DEGREES);
+}
+
+/*
+ * Rotates robot 180 degrees clockwise.
+ */
+void rotate180CW() {
+    moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+    delay(TIME_180_DEGREES);
+}
+// later combine into 1 with paramaters but simpler right now
 
 //-----------------------------------------------------------------------------------------------//
 //------------------------------------------<< DEBUG >>------------------------------------------//
@@ -241,17 +284,16 @@ void dumpGamepad(ControllerPtr ctl) {
  */
 void colorDebug() {
     cleanTerminal();
-    Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colors[RED], colors[GREEN], colors[BLUE], colors[ALPHA]);
+    Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colorArray[RED], colorArray[GREEN], colorArray[BLUE], colorArray[ALPHA]);
     delay(100);
 }
 
 /*
  * Prints the wall sensor values.
  */
-void irDebug() {
+void wallDebug() {
     cleanTerminal();
-    float distance = irSensor.getDistanceFloat();
-    Console.printf("Distance: %.2f cm\n", distance);
+    Console.printf("leftIR: %f frontIR: %f rightIR: %f", irArray[0], irArray[1], irArray[2]);
     delay(100);
 }
 
@@ -261,7 +303,7 @@ void irDebug() {
 void lineDebug() {
     cleanTerminal();
     for (int i = 0; i < NUM_LINE_SENSORS; i++) {
-        Console.printf("%d  ", sensors[i]);
+        Console.printf("%d  ", lineArray[i]);
     }
     Console.println();
     delay(100);
@@ -360,13 +402,22 @@ void moveServo(ControllerPtr ctl) {
 
 /*
  * Handles the color sensor automation setup.
+ * Stage 1: Sample current color
+ * Stage 2: Keep moving motors until 2 || 1 conditions are met
+ *          1. currently sensing sampled color
+ *          2. ensured you moved away from the initial strip
+ *          3. special case: mode switched, exit immediately
+ * Stage 3: When found, stop moving motors after delay.
+ * @param ctl pointer to controller
  */
 void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable significantly affects performance
-    int sampleColor = waitToSample(ctl); // helper that waits until right trigger is pulled to store sample color
-    int currentColor = sampleColor; // current color; just initializing
+    // Stage 1
+    int sampleColor = recordColor(); // saves color currently being sensed
+    int currentColor;
     bool checkInitial = false; // value to check if we moved off the color
     bool colorFound = false; // value to check if we found the color again
-    while (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) { // while both checkInitial and colorFound aren't true
+    // Stage 2
+    while (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) {
         setMode(ctl); // allows exit within loop
         currentColor = recordColor(); // get current Color
         colorFound = false; // set equal to false to reiterate
@@ -378,7 +429,7 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
         }
         moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0); // move forward
     }
-
+    // Stage 3
     delay(100); // change delay offset time so robot 
     moveMotorsHelper(0, 0, 0, 0); // stop robot
 }
@@ -387,14 +438,35 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
  * Handles the wall sensor automation.
  */
 void wallAutomation() {
-    // Not implemented yet.
-}
-
-/*
- * Handles the mechanical automation.
- */
-void mechanicalAutomation() {
-    // Not implemented yet.
+    int turnThreshold = 20; // 20 cm away CHANGE AS NEEDED
+    int leftRightThreshold = 10; // CHANGE AS NEEDED 
+    int difference = irArray[0] - irArray[2];
+    bool significantDifference = abs(difference) > leftRightThreshold; // significant only if one side is significantly closer than the other
+    int speedAdjust = 20; // CHANGE AS NEEDED 
+    updateIR();
+    if (irArray[1] > turnThreshold) { // no wall in front -> move forward
+        if ((irArray[0] < irArray[2]) && significantDifference) {
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED - speedAdjust, 0);
+        } else if (irArray[0] > irArray[2] && significantDifference) {
+            moveMotorsHelper(TOP_MOTOR_SPEED - speedAdjust, 0, TOP_MOTOR_SPEED, 0);
+        } else {
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+        }
+    } else { // wall in front -> turn a direction
+        bool rotate180 = ((irArray[0] < turnThreshold) && (irArray[2] < turnThreshold));
+        bool rotate90cw = (((irArray[0] < turnThreshold) && (irArray[2] > turnThreshold)) || ((irArray[0] > turnThreshold) && (irArray[2] > turnThreshold)));
+        bool rotate90ccw = ((irArray[0] > turnThreshold) && (irArray[2] < turnThreshold));
+        if (rotate180) { // if L and R also on walls -> deadend -> rotate 180 degrees
+            rotate180CW();
+        } else if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
+            rotate90CW();
+        } else if (rotate90ccw) { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
+            rotate90CCW();
+        } else {
+            // This should never happen but here just in case.
+            Console.print("Error: Neither of the three conditions (wallAutomation())");
+        }
+    }
 }
 
 /*
@@ -433,7 +505,9 @@ void lineSetup() {
  * Sets up the wall sensor.
  */
 void irSetup() {
-    irSensor.setFilterRate(1.0f); // Set filter rate to 1.0f (no filtering)
+    leftIRSensor.setFilterRate(1.0f); // Set filter rate to 1.0f (no filtering)
+    frontIRSensor.setFilterRate(1.0f);
+    rightIRSensor.setFilterRate(1.0f);
 }
 
 /*
@@ -495,25 +569,21 @@ void loop() {
             // zr shooting sequence: spin launch motor, delay, spin the servo to allow ball in.
             // zl intake sequence: spins motor to intake balls
             // d pad to pivot up and down shooter
-            Console.print("Current mode: ");
-            Console.println(currentMode);
+            Console.printf("Current mode: %s\n", currentMode);
             switch (currentMode) {
                 case MANUAL: // Manual mode
                     // altMoveMotors(myController);
                     moveMotors(myController);
                     moveServo(myController);
-                    dumpGamepad(myController);
+                    // dumpGamepad(myController);
                     break;
                 case COLOR_AUTOMATION: // Color mode
                     colorAutomation(myController);
                     // colorDebug();
                     break;
                 case WALL_AUTOMATION: // Wall mode
-                    //wallAutomation();
-                    // irDebug();
-                    break;
-                case MECHANICAL_AUTOMATION: // Mechanical mode
-                    //mechanicalAutomation();
+                    wallAutomation();
+                    // wallDebug();
                     break;
                 case LINE_AUTOMATION: // Line follow mode
                     lineAutomation();
