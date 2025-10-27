@@ -38,3 +38,6 @@ Before even attempting, you have to ensure multiple different things work togeth
 2. Adjust color offset delay so robot is over the color. 
 3. Make sure pins are correct. Color, line, and IR are currently just placeholders. 
 4. I use TOP_MOTOR_SPEED for a lot of things. Don't change this variable but make another one if you think it's too fast.
+5. Calculate size of wheel and radius and create equation to automatically see how long it takes to do 90 degrees.
+6. Design robot so it keeps turning towards the right and then it stops when its close enough (threshold).
+7. Remove left sensor integration.
