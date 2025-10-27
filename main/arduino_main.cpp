@@ -52,7 +52,6 @@ const int TIME_180_DEGREES = TIME_90_DEGREES * 2;
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 QTRSensors qtr;// line
-ESP32SharpIR leftIRSensor(ESP32SharpIR::GP2Y0A21YK0F, LEFT_IR_PIN);
 ESP32SharpIR frontIRSensor(ESP32SharpIR::GP2Y0A21YK0F, FRONT_IR_PIN);
 ESP32SharpIR rightIRSensor(ESP32SharpIR::GP2Y0A21YK0F, RIGHT_IR_PIN);
 TwoWire I2C_0 = TwoWire(0);// color
@@ -69,6 +68,7 @@ int kD = 0; // derivative constant for line following
 int kI = 0; // integral constant for line following
 int lastEror = 0; // last error for derivative calculation
 int sum = 0; // sum of errors for integral calculation
+int previous = 0; // store previous value of distance from wall
 
 void updateLine();
 void updateColor();
@@ -207,7 +207,6 @@ int recordColor() {
  * 10-80 cm
  */
 void updateIR() {
-    irArray[0] = leftIRSensor.getDistanceFloat();
     irArray[1] = frontIRSensor.getDistanceFloat();
     irArray[2] = rightIRSensor.getDistanceFloat();
 }
@@ -293,7 +292,7 @@ void colorDebug() {
  */
 void wallDebug() {
     cleanTerminal();
-    Console.printf("leftIR: %f frontIR: %f rightIR: %f", irArray[0], irArray[1], irArray[2]);
+    Console.printf("frontIR: %f rightIR: %f", irArray[1], irArray[2]);
     delay(100);
 }
 
@@ -436,37 +435,43 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
 
 /*
  * Handles the wall sensor automation.
+ * This tries to keep the right sensor within the right threshold line. 
+ * It doesn't matter too much since when there is a path on the right, it will be very clear.
  */
 void wallAutomation() {
-    int turnThreshold = 20; // 20 cm away CHANGE AS NEEDED
-    int leftRightThreshold = 10; // CHANGE AS NEEDED 
-    int difference = irArray[0] - irArray[2];
-    bool significantDifference = abs(difference) > leftRightThreshold; // significant only if one side is significantly closer than the other
+    int wallThreshold = 20; // how far until it's considered an open route
+    int rightThreshold = 10; // how far you want the robot from the right side
     int speedAdjust = 20; // CHANGE AS NEEDED 
+    int multiplier = 1;
     updateIR();
-    if (irArray[1] > turnThreshold) { // no wall in front -> move forward
-        if ((irArray[0] < irArray[2]) && significantDifference) {
-            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED - speedAdjust, 0);
-        } else if (irArray[0] > irArray[2] && significantDifference) {
-            moveMotorsHelper(TOP_MOTOR_SPEED - speedAdjust, 0, TOP_MOTOR_SPEED, 0);
-        } else {
-            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+    float frontDistance = irArray[1];
+    float rightDistance = irArray[2];
+    float current = rightDistance;
+    float direction = current - previous; // true: moving away from wall false: moving towards wall
+    if (irArray[1] > wallThreshold) { // no wall in front -> move forward
+        if (irArray[2] > rightThreshold) { // farther than where needed, turn right
+            if (irArray[2] > wallThreshold) { // too far from where needed
+                multiplier = 2; // or create manual adjustment where you actually turna nd guarentee its within wall boundary
+            }
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED - (speedAdjust * multiplier), 0);
+        } else { // where you need to be, straighten up
+            if (direction > 5) { // moving away, turn right
+                moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED - (speedAdjust * multiplier), 0);
+            } else if (direction < -5) { // moving towards, turn left
+                moveMotorsHelper(TOP_MOTOR_SPEED - (speedAdjust * multiplier), 0, TOP_MOTOR_SPEED, 0);
+            } else {
+                moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            }
         }
     } else { // wall in front -> turn a direction
-        bool rotate180 = ((irArray[0] < turnThreshold) && (irArray[2] < turnThreshold));
-        bool rotate90cw = (((irArray[0] < turnThreshold) && (irArray[2] > turnThreshold)) || ((irArray[0] > turnThreshold) && (irArray[2] > turnThreshold)));
-        bool rotate90ccw = ((irArray[0] > turnThreshold) && (irArray[2] < turnThreshold));
-        if (rotate180) { // if L and R also on walls -> deadend -> rotate 180 degrees
-            rotate180CW();
-        } else if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
+        bool rotate90cw = (irArray[2] > wallThreshold);
+        if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
             rotate90CW();
-        } else if (rotate90ccw) { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
+        } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
             rotate90CCW();
-        } else {
-            // This should never happen but here just in case.
-            Console.print("Error: Neither of the three conditions (wallAutomation())");
         }
     }
+    previous = current;
 }
 
 /*
@@ -505,7 +510,6 @@ void lineSetup() {
  * Sets up the wall sensor.
  */
 void irSetup() {
-    leftIRSensor.setFilterRate(1.0f); // Set filter rate to 1.0f (no filtering)
     frontIRSensor.setFilterRate(1.0f);
     rightIRSensor.setFilterRate(1.0f);
 }
