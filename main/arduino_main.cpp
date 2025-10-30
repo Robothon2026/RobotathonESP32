@@ -201,7 +201,7 @@ int recordColor() {
     // Console.printf("Alpha: %d\n", colorArray[ALPHA]);
     
     int maxColor = -1;
-    loop through colors until you find the index of the largest value
+    //loop through colors until you find the index of the largest value
     for (int i = 0; i < NUM_COLORS - 1; i++) {
         if (colorArray[i] > maxColor) {
             maxColor = i;
@@ -595,8 +595,7 @@ void loop() {
                     // dumpGamepad(myController);
                     break;
                 case COLOR_AUTOMATION: // Color mode
-                    //colorAutomation(myController);
-                    recordColor();
+                    colorAutomation(myController);
                     // colorDebug();
                     break;
                 case WALL_AUTOMATION: // Wall mode
