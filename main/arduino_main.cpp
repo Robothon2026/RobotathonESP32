@@ -17,40 +17,87 @@
 #include <WebServer.h>
 
 #define ONBOARD_LED_PIN 2 // LED pin
+
 #define IN1 19 // Right motor pins
 #define IN2 18
 #define IN3 17 // Left motor pins
 #define IN4 16            
-const uint8_t LINE_FOLLOW_PINS[] = {32, 39, 4, 26, 25, 15, 2, 0}; // place holders for line sensor pins
-#define IR_PIN 0 // place holders for IR sensor pins
+const uint8_t LINE_FOLLOW_PINS[] = {36, 35, 34, 14, 13, 39, 33, 32}; // place holders for line sensor pins
+#define LEFT_IR_PIN 0 // place holders for IR sensor pins
+#define FRONT_IR_PIN 25
+#define RIGHT_IR_PIN 26 
 #define APDS9960_INT_PIN 0 // place holders for color sensor pins and settings
-#define I2C_SDA_PIN 0
-#define I2C_SCL_PIN 0
+#define I2C_SDA_PIN 21
+#define I2C_SCL_PIN 22
 
 const uint8_t TOP_MOTOR_SPEED = 255; // max speed of motors
 const int MAX_JOYSTICK_INPUT = 512; // max speed value from controller
-const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_PINS[0]); // number of line sensors
+const uint8_t NUM_COLORS = 4;
+const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_PINS[0]);
+const uint8_t NUM_IR_SENSORS = 3;
 const int I2C_FREQUENCY = 100000; // I2C frequency for color sensor
 const char* SSID = "yourSSID"; // WiFi SSID
 const char* PASSWORD = "yourPassword"; // WiFi Password
+const char* const MODES[] = {"Manual", "Color automation", "Wall automation", "Line automation"};
+const int MANUAL = 0;
+const int COLOR_AUTOMATION = 1;
+const int WALL_AUTOMATION = 2;
+const int LINE_AUTOMATION = 3;
+const int RED = 0;
+const int GREEN = 1;
+const int BLUE = 2;
+const int ALPHA = 3; // switch to u_int8_t later on
+
+const int TIME_90_DEGREES = 0; // CHANGE AS NEEDED 
+const int TIME_180_DEGREES = TIME_90_DEGREES * 2;
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 QTRSensors qtr;// line
-ESP32SharpIR irSensor(ESP32SharpIR::GP2Y0A21YK0F, IR_PIN);// IR
+ESP32SharpIR frontIRSensor(ESP32SharpIR::GP2Y0A21YK0F, FRONT_IR_PIN);
+ESP32SharpIR rightIRSensor(ESP32SharpIR::GP2Y0A21YK0F, RIGHT_IR_PIN);
 TwoWire I2C_0 = TwoWire(0);// color
 APDS9960 apds = APDS9960(I2C_0, APDS9960_INT_PIN);
 WiFiServer telnetServer(23); // Telnet server
 WiFiClient telnetClient; // Telnet client
 
 int currentMode = 0; // current mode for robot
-int colors[4]; // array holding information for r, g, b, a
-uint16_t sensors[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SENSORS
-int division = 3; // divide the speed by 3 for line following mode
-float correctionforline = 1; // correction incase of overshooting the line back
-int counterforline = 0; // manual counter for line following adjustments
+int colorArray[NUM_COLORS]; // array holding information for r, g, b, a
+uint16_t lineArray[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SENSORS
+float irArray[NUM_IR_SENSORS]; // L F R
+int kP= 0.5; // proportional constant for line following
+int kD = 0; // derivative constant for line following
+int kI = 0; // integral constant for line following
+int lastEror = 0; // last error for derivative calculation
+int sum = 0; // sum of errors for integral calculation
+int previous = 0; // store previous value of distance from wall
+
+void updateLine();
+void updateColor();
+void updateIR();
+
 //-----------------------------------------------------------------------------------------------//
 //-----------------------------------------<< HELPERS >>-----------------------------------------//
 //-----------------------------------------------------------------------------------------------//
+
+int lineHelper() {
+    updateLine();
+    int Error = 0; // used to calculate the error from the line
+    int weights[] = {-3, -2, -1, 0, 0, 1, 2, -3}; // Adjust weights based on number of sensors
+    for(int i = 0; i < NUM_LINE_SENSORS; i++) { // for loop to go through all sensors
+        Error = lineArray[i] * weights[i]; // calculates the weighted error with the value of the sensor                 
+    }                                       // example: if leftmost sensor is on black (1000) and all others are white (0)
+                                            // then error = 0 * -3 + 1,000 * -2 +  1,000 * -1 + 0 * 0 + 0* 0 + 0 * 1 + 0 * 2 + 0 * 3 = -3000
+    Error = Error / 1000; // Normalize error by diving by the highest sensor value that is 1000;
+    int P = kP * Error; // equation for the porpotional term for the immediate correction
+    int D = kD * (Error - lastEror); // equation for the derivative term for appliying a small brake on the porpotional term
+    sum = sum + Error; // sum of all errors up to now for integral term to use to track long term errors over the course
+    int I = kI * sum; // equation for the integral term to correct for long term error and apply small amount of correction
+                      // The integral term is very small and only affects the robot if a long and difficult course
+                      // I think the integral is optional if we want speed but we would have to test  
+    lastEror = Error; // Store current error for the next calculation for the derivative term 
+    return P + D + I; // returnt the added up corrections into one value
+}
+
 /*
  * Cleans terminal to debug easier.
  */
@@ -79,17 +126,15 @@ void calibrateLineSensors() {
  * @param ctl pointer to controller
  */
 void setMode(ControllerPtr ctl) {
-    if (ctl->dpad()) {
-        currentMode = 0; // Manual mode
-    } else if (ctl->b()) {
-        currentMode = 1; // Color mode
+    if (ctl->b()) {
+        currentMode = MANUAL; // Manual mode
     } else if (ctl->a()) {
-        currentMode = 2; // Wall mode
+        currentMode = COLOR_AUTOMATION; // Color mode
     } else if (ctl->x()) {
-        currentMode = 3; // Mechanical mode
+        currentMode = WALL_AUTOMATION; // Wall mode
     } else if (ctl->y()) {
-        currentMode = 4; // Line follow mode
-    }
+        currentMode = LINE_AUTOMATION; // Line mode
+    } 
 }
 
 /*
@@ -122,7 +167,7 @@ void wifiConnect() {
  */
 void invertSensors() {
     for (int i = 0; i < NUM_LINE_SENSORS; i++) {
-        sensors[i] = 1000 - sensors[i]; // Assuming 12-bit ADC, invert the value
+        lineArray[i] = 1000 - lineArray[i]; // Assuming 12-bit ADC, invert the value
     }
 }
 
@@ -140,73 +185,78 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
     analogWrite(IN3, rightSpeedForward);
     analogWrite(IN4, rightSpeedBackward);
 }
-//----------------------------------------FABIAN'S ALGORITHIM------------------------------------//
-//calculates multiplier based on which sensor is activated
-float multiplier(int sensor){
-    float multiplier = 1; // default multiplier
-    //correction incase of overshooting or undershooting the line
-    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
-    invertSensors(); // Invert sensor values for easier debugging
-    for(int i = 0; i < NUM_LINE_SENSORS; i++) { //loop through all sensor
-        if (sensor == 7 || sensor== 0){// if far right or far left sensor on black
-        multiplier = 3 * correctionforline;                         // highest mulitplier
-        counterforline += 1;                        
-    } else if (sensor == 1 || sensor == 6 ){ // if right or left sensor on black
-        multiplier =  2 * correctionforline;                        // medium multiplier
-        counterforline += 1;
-    } else if (sensor == 2 || sensor == 5 ){// if slight right or slight left sensor on black
-        multiplier = 1 * correctionforline;                  // lowest multiplier
-        counterforline += 1;
-    } 
-    }
+
+/*
+ * Helper to find specific color
+ * 0: red 1: green 2: blue
+ * @return number associated with color
+ */
+int recordColor() {
+    updateColor();
+
+    //**Reading Color Debugging**
+    // Console.printf("Red: %d\n", colorArray[RED]);
+    // Console.printf("BLue: %d\n", colorArray[BLUE]);
+    // Console.printf("Green: %d\n", colorArray[GREEN]);
+    // Console.printf("Alpha: %d\n", colorArray[ALPHA]);
     
-    return multiplier;
-}
-//checks if robot is on line
-boolean onLine(){
-    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
-    invertSensors(); // Invert sensor values for easier debugging
-    int middlesensorL = sensors[3]; // middle left sensor
-    int middlesensorR = sensors[4]; // middle right sensor
-     if(middlesensorL > 200 && middlesensorR > 200){ // if both middle sensors detect black
-        return true; //on line
-    }
-    return false; //not on line
-}
-
-//moves robot according to which side the line is detected on
-void AdjustToLine(int speed){
-    qtr.readLineBlack(sensors); // Read line sensor values and put into sensors array
-    invertSensors(); // Invert sensor values for easier debugging
-    int leftside = 3 ;// size of left side sensors excluding middle
-    int rightside = NUM_LINE_SENSORS / 2;// size of right side sensors excluding middle
-    int p = 0;
-    int k = 0;
-    for(int i = 0; i < leftside; i++) {
-        p = sensors[i];
-        if(p < 300){
-            int multi = multiplier(i);
-            moveMotorsHelper(0, speed, speed * multi, 0); //turn left according to which sensor flared up;
+    int maxColor = -1;
+    loop through colors until you find the index of the largest value
+    for (int i = 0; i < NUM_COLORS - 1; i++) {
+        if (colorArray[i] > maxColor) {
+            maxColor = i;
         }
     }
-    for (int i = NUM_LINE_SENSORS - 1; i > rightside; i--){
-        k = sensors[i];
-        if(k < 300){
-            int multi = multiplier(k);
-            moveMotorsHelper(speed * multi, 0, 0, speed); //turn right according to which sensor flared up;
-        }
-    }
+    return maxColor;
 }
 
-//adjusts correction variable based on how long robot has been off line
-void correctionforLineSensor(){
-    if(counterforline > 20){ //if counter exceeds 20, decrease correction slightly
-        correctionforline -= 0.01;
-    } if(counterforline > 40){ //if counter exceeds 40, decrease correction slightly more
-        correctionforline -= 0.03;
- }
+/*
+ * Updates irArray with new values.
+ * 10-80 cm
+ */
+void updateIR() {
+    irArray[1] = frontIRSensor.getDistanceFloat();
+    irArray[2] = rightIRSensor.getDistanceFloat();
 }
 
+/*
+ * Updates colorArray with new values.
+ */
+void updateColor() {
+    apds.readColor(colorArray[RED], colorArray[GREEN], colorArray[BLUE], colorArray[ALPHA]);
+}
+
+/*
+ * Updates lineArray with new values.
+ */
+void updateLine() {
+    qtr.readLineBlack(lineArray);
+}
+
+/*
+ * Rotates robot 90 degrees clockwise.
+ */
+void rotate90CW() {
+        moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED);
+        delay(TIME_90_DEGREES);
+}
+
+/*
+ * Rotates robot 90 degrees counter clockwise.
+ */
+void rotate90CCW() {
+    moveMotorsHelper(0, TOP_MOTOR_SPEED, TOP_MOTOR_SPEED, 0);
+    delay(TIME_90_DEGREES);
+}
+
+/*
+ * Rotates robot 180 degrees clockwise.
+ */
+void rotate180CW() {
+    moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+    delay(TIME_180_DEGREES);
+}
+// later combine into 1 with paramaters but simpler right now
 
 //-----------------------------------------------------------------------------------------------//
 //------------------------------------------<< DEBUG >>------------------------------------------//
@@ -241,17 +291,16 @@ void dumpGamepad(ControllerPtr ctl) {
  */
 void colorDebug() {
     cleanTerminal();
-    Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colors[0], colors[1], colors[2], colors[3]);
+    Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colorArray[RED], colorArray[GREEN], colorArray[BLUE], colorArray[ALPHA]);
     delay(100);
 }
 
 /*
  * Prints the wall sensor values.
  */
-void irDebug() {
+void wallDebug() {
     cleanTerminal();
-    float distance = irSensor.getDistanceFloat();
-    Console.printf("Distance: %.2f cm\n", distance);
+    Console.printf("frontIR: %f rightIR: %f", irArray[1], irArray[2]);
     delay(100);
 }
 
@@ -261,7 +310,7 @@ void irDebug() {
 void lineDebug() {
     cleanTerminal();
     for (int i = 0; i < NUM_LINE_SENSORS; i++) {
-        Console.printf("%d  ", sensors[i]);
+        Console.printf("%d  ", lineArray[i]);
     }
     Console.println();
     delay(100);
@@ -360,26 +409,82 @@ void moveServo(ControllerPtr ctl) {
 
 /*
  * Handles the color sensor automation setup.
+ * Stage 1: Sample current color
+ * Stage 2: Keep moving motors until 2 || 1 conditions are met
+ *          1. currently sensing sampled color
+ *          2. ensured you moved away from the initial strip
+ *          3. special case: mode switched, exit immediately
+ * Stage 3: When found, stop moving motors after delay.
+ * @param ctl pointer to controller
  */
-void colorAutomation() { // ask mentor if global variable significantly affects performance
-    while (!apds.colorAvailable()) {
-        delay(5);
+void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable significantly affects performance
+    // Stage 1
+    int sampleColor = recordColor(); // saves color currently being sensed
+    int currentColor;
+    bool checkInitial = false; // value to check if we moved off the color
+    bool colorFound = false; // value to check if we found the color again
+    // Stage 2
+    while (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) {
+        setMode(ctl); // allows exit within loop
+        currentColor = recordColor(); // get current Color
+        colorFound = false; // set equal to false to reiterate
+        if (currentColor != sampleColor) { // if we moved off the sampled color
+            checkInitial = true;
+        }
+        if (currentColor == sampleColor) { // if we found the color again
+            colorFound = true;
+        }
+        moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0); // move forward
     }
-    apds.readColor(colors[0], colors[1], colors[2], colors[3]); // Updates array
+    // Stage 3
+    delay(100); // change delay offset time so robot 
+    moveMotorsHelper(0, 0, 0, 0); // stop robot
 }
 
 /*
  * Handles the wall sensor automation.
+ * This tries to keep the right sensor within the right threshold line. 
+ * It doesn't matter too much since when there is a path on the right, it will be very clear.
  */
 void wallAutomation() {
-    // Not implemented yet.
-}
+    int wallThreshold = 20; // how far until it's considered an open route
+    int rightThreshold = 10; // how far you want the robot from the right side
+    int speedAdjust = 20; // CHANGE AS NEEDED 
+    int multiplier = 1;
+    updateIR();
+    float frontDistance = irArray[1];
+    float rightDistance = irArray[2];
+    
+    //** distance debugging */
+    // Console.printf("Front Distance: %f\n", frontDistance);
+    // Console.printf("Right Distance: %f\n", rightDistance);
 
-/*
- * Handles the mechanical automation.
- */
-void mechanicalAutomation() {
-    // Not implemented yet.
+    float current = rightDistance;
+    float direction = current - previous; // true: moving away from wall false: moving towards wall
+    if (irArray[1] > wallThreshold) { // no wall in front -> move forward
+        if (irArray[2] > rightThreshold) { // farther than where needed, turn right
+            if (irArray[2] > wallThreshold) { // too far from where needed
+                multiplier = 2; // or create manual adjustment where you actually turna nd guarentee its within wall boundary
+            }
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED - (speedAdjust * multiplier), 0);
+        } else { // where you need to be, straighten up
+            if (direction > 5) { // moving away, turn right
+                moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED - (speedAdjust * multiplier), 0);
+            } else if (direction < -5) { // moving towards, turn left
+                moveMotorsHelper(TOP_MOTOR_SPEED - (speedAdjust * multiplier), 0, TOP_MOTOR_SPEED, 0);
+            } else {
+                moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            }
+        }
+    } else { // wall in front -> turn a direction
+        bool rotate90cw = (irArray[2] > wallThreshold);
+        if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
+            rotate90CW();
+        } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
+            rotate90CCW();
+        }
+    }
+    previous = current;
 }
 
 /*
@@ -387,13 +492,18 @@ void mechanicalAutomation() {
  */
 void lineAutomation() {
     //Fabian's ALGORITHIM
-    int speed = TOP_MOTOR_SPEED / division;
-    correctionforLineSensor();
-    if(!onLine()){
-        AdjustToLine(speed);
-    } else if(onLine()){
-        moveMotorsHelper(speed, 0, speed, 0);
-    }
+    int speed = TOP_MOTOR_SPEED; // top speed of motors
+    int correction = lineHelper(); // The correction for the lineHelper that will fix the robot's path
+    moveMotorsHelper(speed + correction ,0 ,speed - correction ,0); // move motors with correction applied to speed
+    /* if correction is negative, move left by adjusting the left wheel slower while adjusitng the right wheel faster
+    if correction is positive, move right by adjusting the right wheel slower while adjusitng the left wheel faster
+    if correction is zero, move straight forward at full speed
+    I decided to not use the invert sensors function because it is easers to just use 1,000 for black and 0 for white
+    as if i use it the other way i would have to invert everything and also i wouldn't know how that would be able to work becuase
+    right now the lineHelper function works by multiplying the sensor values by the weights but if its 1,000 in the middle and 0 on white
+    then the error would go based off the middle which i dont think would be as effecient and just more complicated then using 0
+    for white and 1,000 for black
+    */
 }
 
 //-----------------------------------------------------------------------------------------------//
@@ -413,7 +523,8 @@ void lineSetup() {
  * Sets up the wall sensor.
  */
 void irSetup() {
-    irSensor.setFilterRate(1.0f); // Set filter rate to 1.0f (no filtering)
+    frontIRSensor.setFilterRate(1.0f);
+    rightIRSensor.setFilterRate(1.0f);
 }
 
 /*
@@ -435,7 +546,9 @@ void motorSetup() {
     pinMode(IN4, OUTPUT);
 }
 
-
+/*
+ * Initial wifi setup and starts telnet
+ */
 void wifiConnectSetup() {
     WiFi.begin(SSID, PASSWORD);
     while (WiFi.status() != WL_CONNECTED) {
@@ -451,11 +564,8 @@ void setup() {
     BP32.forgetBluetoothKeys(); 
     esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
     uni_bt_allowlist_set_enabled(true);
-
     colorSetup(); // Setup color sensor
-
     Serial.begin(115200);
-
     pinMode(ONBOARD_LED_PIN, OUTPUT); // Setup LED pin
     motorSetup(); // Setup motor pins
     lineSetup(); // Setup line sensors
@@ -472,33 +582,30 @@ void loop() {
         if (myController && myController->isConnected() && myController->hasData()) {
             // wifiConnect(); // Handle WiFi connections
             setMode(myController); // Set current mode based on controller input
-
+                                   // If to inefficient, create loops within each case and handle exiting internally
             // zr shooting sequence: spin launch motor, delay, spin the servo to allow ball in.
             // zl intake sequence: spins motor to intake balls
             // d pad to pivot up and down shooter
-            Console.print("Current mode: ");
-            Console.println(currentMode);
+            Console.printf("Current mode: %s\n", MODES[currentMode]);
             switch (currentMode) {
-                case 0: // Manual mode
+                case MANUAL: // Manual mode
                     // altMoveMotors(myController);
                     moveMotors(myController);
                     moveServo(myController);
-                    dumpGamepad(myController);
+                    // dumpGamepad(myController);
                     break;
-                case 1: // Color mode
-                    //colorAutomation();
+                case COLOR_AUTOMATION: // Color mode
+                    //colorAutomation(myController);
+                    recordColor();
                     // colorDebug();
                     break;
-                case 2: // Wall mode
-                    //wallAutomation();
-                    // irDebug();
+                case WALL_AUTOMATION: // Wall mode
+                    wallAutomation();
+                    // wallDebug();
                     break;
-                case 3: // Mechanical mode
-                    //mechanicalAutomation();
-                    break;
-                case 4: // Line follow mode
+                case LINE_AUTOMATION: // Line follow mode
                     lineAutomation();
-                    lineDebug();
+                    // lineDebug();
                     break;
             }
         }
