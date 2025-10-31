@@ -31,7 +31,7 @@ const uint8_t LINE_FOLLOW_PINS[] = {36, 35, 34, 14, 13, 39, 33, 32}; // place ho
 #define I2C_SCL_PIN 22
 
 const uint8_t TOP_MOTOR_SPEED = 255; // max speed of motors
-const int MAX_JOYSTICK_INPUT = 512; // max speed value from controller
+const uint16_t MAX_JOYSTICK_INPUT = 512; // max speed value from controller
 const uint8_t NUM_COLORS = 4;
 const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_PINS[0]);
 const uint8_t NUM_IR_SENSORS = 3;
@@ -39,17 +39,16 @@ const int I2C_FREQUENCY = 100000; // I2C frequency for color sensor
 const char* SSID = "yourSSID"; // WiFi SSID
 const char* PASSWORD = "yourPassword"; // WiFi Password
 const char* const MODES[] = {"Manual", "Color automation", "Wall automation", "Line automation"};
-const int MANUAL = 0;
-const int COLOR_AUTOMATION = 1;
-const int WALL_AUTOMATION = 2;
-const int LINE_AUTOMATION = 3;
-const int RED = 0;
-const int GREEN = 1;
-const int BLUE = 2;
-const int ALPHA = 3; // switch to u_int8_t later on
+const short MANUAL = 0;
+const uint8_t COLOR_AUTOMATION = 1;
+const uint8_t WALL_AUTOMATION = 2;
+const uint8_t LINE_AUTOMATION = 3;
+const uint8_t RED = 0;
+const uint8_t GREEN = 1;
+const uint8_t BLUE = 2;
+const uint8_t ALPHA = 3;
 
 const int TIME_90_DEGREES = 0; // CHANGE AS NEEDED 
-const int TIME_180_DEGREES = TIME_90_DEGREES * 2;
 
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 QTRSensors qtr;// line
@@ -188,26 +187,36 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
 
 /*
  * Helper to find specific color
- * 0: red 1: green 2: blue
+ * -1: None 0: red 1: green 2: blue
  * @return number associated with color
  */
 int recordColor() {
-    updateColor();
-
-    //**Reading Color Debugging**
-    // Console.printf("Red: %d\n", colorArray[RED]);
-    // Console.printf("BLue: %d\n", colorArray[BLUE]);
-    // Console.printf("Green: %d\n", colorArray[GREEN]);
-    // Console.printf("Alpha: %d\n", colorArray[ALPHA]);
-    
-    int maxColor = -1;
-    //loop through colors until you find the index of the largest value
-    for (int i = 0; i < NUM_COLORS - 1; i++) {
-        if (colorArray[i] > maxColor) {
-            maxColor = i;
-        }
+    int colorThreshold = 200; // number to consider color main
+    int otherThreshold = 50; // number other colors have to stay below
+    int color = -1; // initialize to none until it finds a color
+    if ((colorArray[RED] > colorThreshold) && (colorArray[GREEN] < otherThreshold) && (colorArray[BLUE] < otherThreshold)) {
+        color = RED;
+    } else if ((colorArray[GREEN] > colorThreshold) && (colorArray[RED] < otherThreshold) && (colorArray[BLUE] < otherThreshold)) {
+        color = GREEN;
+    } else if ((colorArray[BLUE] > colorThreshold) && (colorArray[RED] < otherThreshold) && (colorArray[GREEN] < otherThreshold)) {
+        color = BLUE;
     }
-    return maxColor;
+    return color;
+}
+
+/*
+ * Helper to find a valid color
+ * 0: red 1: green 2: blue
+ * @return number associated with color
+ */
+int recordValidColor(ControllerPtr ctl) {
+    int color = -1;
+    while (color == -1 && currentMode == COLOR_AUTOMATION) {
+        setMode(ctl);
+        updateColor();
+        color = recordColor();
+    }
+    return color;
 }
 
 /*
@@ -237,8 +246,8 @@ void updateLine() {
  * Rotates robot 90 degrees clockwise.
  */
 void rotate90CW() {
-        moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED);
-        delay(TIME_90_DEGREES);
+    moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED);
+    delay(TIME_90_DEGREES);
 }
 
 /*
@@ -248,15 +257,6 @@ void rotate90CCW() {
     moveMotorsHelper(0, TOP_MOTOR_SPEED, TOP_MOTOR_SPEED, 0);
     delay(TIME_90_DEGREES);
 }
-
-/*
- * Rotates robot 180 degrees clockwise.
- */
-void rotate180CW() {
-    moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
-    delay(TIME_180_DEGREES);
-}
-// later combine into 1 with paramaters but simpler right now
 
 //-----------------------------------------------------------------------------------------------//
 //------------------------------------------<< DEBUG >>------------------------------------------//
@@ -410,23 +410,23 @@ void moveServo(ControllerPtr ctl) {
 /*
  * Handles the color sensor automation setup.
  * Stage 1: Sample current color
- * Stage 2: Keep moving motors until 2 || 1 conditions are met
- *          1. currently sensing sampled color
- *          2. ensured you moved away from the initial strip
- *          3. special case: mode switched, exit immediately
+ * Stage 2: Keep moving motors until conditions are met
+ *          a. currently sensing sampled color
+ *          b. ensured you moved away from the initial strip
+ *          c. special case: mode switched, exit immediately
  * Stage 3: When found, stop moving motors after delay.
  * @param ctl pointer to controller
  */
 void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable significantly affects performance
     // Stage 1
-    int sampleColor = recordColor(); // saves color currently being sensed
+    int sampleColor = recordValidColor(ctl); // saves color currently being sensed
     int currentColor;
     bool checkInitial = false; // value to check if we moved off the color
     bool colorFound = false; // value to check if we found the color again
     // Stage 2
     while (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) {
         setMode(ctl); // allows exit within loop
-        currentColor = recordColor(); // get current Color
+        currentColor = recordValidColor(ctl); // get current Color
         colorFound = false; // set equal to false to reiterate
         if (currentColor != sampleColor) { // if we moved off the sampled color
             checkInitial = true;
@@ -437,7 +437,7 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
         moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0); // move forward
     }
     // Stage 3
-    delay(100); // change delay offset time so robot 
+    delay(100);
     moveMotorsHelper(0, 0, 0, 0); // stop robot
 }
 
@@ -586,6 +586,7 @@ void loop() {
             // zr shooting sequence: spin launch motor, delay, spin the servo to allow ball in.
             // zl intake sequence: spins motor to intake balls
             // d pad to pivot up and down shooter
+            cleanTerminal();
             Console.printf("Current mode: %s\n", MODES[currentMode]);
             switch (currentMode) {
                 case MANUAL: // Manual mode
