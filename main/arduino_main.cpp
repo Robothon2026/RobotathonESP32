@@ -420,14 +420,14 @@ void moveServo(ControllerPtr ctl) {
  */
 void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable significantly affects performance
     // Stage 1
-    int sampleColor = recordValidColor(ctl); // saves red, green, or blue (no other colors)
+    int sampleColor = recordColor(); // saves red, green, or blue (no other colors)
     int currentColor;
     bool checkInitial = false; // value to check if we moved off the color
     bool colorFound = false; // value to check if we found the color again
     // Stage 2
     while (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) {
         setMode(ctl); // allows exit within loop
-        currentColor = recordColor(ctl); // get current Color (r, g, b, none)
+        currentColor = recordColor(); // get current Color (r, g, b, none)
         colorFound = false; // set equal to false to reiterate
         if (currentColor != sampleColor) { // if we moved off the sampled color
             checkInitial = true;
