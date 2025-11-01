@@ -43,6 +43,7 @@ const short MANUAL = 0;
 const uint8_t COLOR_AUTOMATION = 1;
 const uint8_t WALL_AUTOMATION = 2;
 const uint8_t LINE_AUTOMATION = 3;
+const int8_t NONE = -1;
 const uint8_t RED = 0;
 const uint8_t GREEN = 1;
 const uint8_t BLUE = 2;
@@ -193,7 +194,7 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
 int recordColor() {
     int colorThreshold = 200; // number to consider color main
     int otherThreshold = 50; // number other colors have to stay below
-    int color = -1; // initialize to none until it finds a color
+    int color = NONE; // initialize to none until it finds a color
     if ((colorArray[RED] > colorThreshold) && (colorArray[GREEN] < otherThreshold) && (colorArray[BLUE] < otherThreshold)) {
         color = RED;
     } else if ((colorArray[GREEN] > colorThreshold) && (colorArray[RED] < otherThreshold) && (colorArray[BLUE] < otherThreshold)) {
@@ -210,8 +211,8 @@ int recordColor() {
  * @return number associated with color
  */
 int recordValidColor(ControllerPtr ctl) {
-    int color = -1;
-    while (color == -1 && currentMode == COLOR_AUTOMATION) {
+    int color = NONE;
+    while (color == NONE && currentMode == COLOR_AUTOMATION) {
         setMode(ctl);
         updateColor();
         color = recordColor();
@@ -419,14 +420,14 @@ void moveServo(ControllerPtr ctl) {
  */
 void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable significantly affects performance
     // Stage 1
-    int sampleColor = recordValidColor(ctl); // saves color currently being sensed
+    int sampleColor = recordValidColor(ctl); // saves red, green, or blue (no other colors)
     int currentColor;
     bool checkInitial = false; // value to check if we moved off the color
     bool colorFound = false; // value to check if we found the color again
     // Stage 2
     while (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) {
         setMode(ctl); // allows exit within loop
-        currentColor = recordValidColor(ctl); // get current Color
+        currentColor = recordColor(ctl); // get current Color (r, g, b, none)
         colorFound = false; // set equal to false to reiterate
         if (currentColor != sampleColor) { // if we moved off the sampled color
             checkInitial = true;
