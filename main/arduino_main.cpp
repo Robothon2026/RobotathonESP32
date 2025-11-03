@@ -572,6 +572,9 @@ ESP32SharpIR rightIRSensor(ESP32SharpIR::GP2Y0A21YK0F, RIGHT_IR_PIN);
 float irArray[NUM_IR_SENSORS];
 const int TIME_90_DEGREES = 1000; 
 
+void rotate90CW();
+void rotate90CCW();
+
 /*
  * Sets up the wall sensor.
  */
@@ -592,9 +595,6 @@ void wallAutomation() {
     int multiplier = 2;
     float frontDistance = irArray[1];
     float rightDistance = irArray[2];
-
-    void rotate90CW();
-    void rotate90CCW();
     
     //** distance debugging */
     // Console.printf("Front Distance: %f\n", frontDistance);
