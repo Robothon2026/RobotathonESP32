@@ -467,7 +467,6 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
     
     // Stage 2
     if (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) {
-        Console.print(currentMode);
         setMode(ctl); // allows exit within loop
         currentColor = recordColor(); // get current Color (r, g, b, none)
         colorFound = false; // set equal to false to reiterate
@@ -482,7 +481,6 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
         moveMotorsHelper(0, 0, 0, 0); // stop robot
         currentMode = MANUAL;
         resetColorVariables();
-        Console.print("ajsdlkfa;sdfas");
     }
 }
 
@@ -569,18 +567,18 @@ const uint8_t NUM_IR_SENSORS = 2;
 ESP32SharpIR frontIRSensor(ESP32SharpIR::GP2Y0A21YK0F, FRONT_IR_PIN);
 ESP32SharpIR rightIRSensor(ESP32SharpIR::GP2Y0A21YK0F, RIGHT_IR_PIN);
 float irArray[NUM_IR_SENSORS];
-const uint64_t TIME_2880_DEGREES = 1000000;
-//const uint64_t TIME_90_DEGREES = TIME_2880_DEGREES / 32;
-const uint64_t TIME_90_DEGREES = 150000;
-const uint64_t TIME_1_DEGREE = TIME_2880_DEGREES / 2880;
+const uint32_t TIME_2880_DEGREES = 1000000;
+//const uint32_t TIME_90_DEGREES = TIME_2880_DEGREES / 32;
+const uint32_t TIME_90_DEGREES = 150000;
+const uint32_t TIME_1_DEGREE = TIME_2880_DEGREES / 2880;
 int wallThreshold = 20; // how far until it's considered an open route
 int leftThreshold = 20; // how far left sensor has to be to consider open route
 int rightThreshold = 20; // how far right sensor has to be to consider open route
 
-void rotate90CW(uint64_t addedDelayMicroseconds = 0, bool direction = true);
-void rotate90CCW(uint64_t addedDelayMicroseconds = 0, bool direction = true);
-void rotate90CWAlt(uint64_t addedDelayMicroseconds = 0, bool direction = true);
-void rotate90CCWAlt(uint64_t addedDelayMicroseconds = 0, bool direction = true);
+void rotate90CW(uint32_t addedDelayMicroseconds = 0, bool direction = true);
+void rotate90CCW(uint32_t addedDelayMicroseconds = 0, bool direction = true);
+void rotate90CWAlt(uint32_t addedDelayMicroseconds = 0, bool direction = true);
+void rotate90CCWAlt(uint32_t addedDelayMicroseconds = 0, bool direction = true);
 void updateIR();
 
 /*
@@ -682,21 +680,22 @@ void wallAutomationC() { // basically calls updateIR() twice find a fix
     if (prev == -1) prev = curr; // initialize prev during first run
     float expression = constrain((curr - prev) / DISTANCE_IN_TIME_90_DEGREES, -1.0, 1.0);
     float angle = abs(asin(expression)) * (180.0 / PI); // calculate angle in degrees no negatives
-    uint64_t start = esp_timer_get_time();
-    while ((esp_timer_get_time() - start < TIME_90_DEGREES )) {
+    uint32_t start = millis();
+    while ((millis() - start < TIME_90_DEGREES )) {
         updateIR();
         frontDistance = irArray[0];
         rightDistance = irArray[1];
         if (frontDistance > wallThreshold) { // no wall in front -> move forward
-            //moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            delay(1);
         } else { // wall in front -> turn a direction
             bool rotate90cw = (rightDistance > rightThreshold); // open on right
             int direction = (curr - prev) > 0 ? true : false; // determine direction of angle
-            uint64_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
+            uint32_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
             if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
-                //rotate90CW(time, direction);
+                rotate90CW(time, direction);
             } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
-                //rotate90CCW(time, direction);
+                rotate90CCW(time, direction);
             }
             break; // exit while loop after turn
         }
@@ -766,26 +765,29 @@ void wallAutomationF() {
     if (prev == -1) prev = curr; // initialize prev during first run
     float expression = constrain((curr - prev) / DISTANCE_IN_TIME_90_DEGREES, -1.0, 1.0);
     float angle = abs(asin(expression)) * (180.0 / PI); // calculate angle in degrees no negatives
-    uint64_t start = esp_timer_get_time();
-    while ((esp_timer_get_time() - start < TIME_90_DEGREES )) {
+    uint32_t start = millis();
+    while ((millis() - start < TIME_90_DEGREES )) {
         updateIR();
         leftDistance = irArray[0];
         rightDistance = irArray[1];
         if (leftWall && rightWall) { // no wall in front -> move forward
             moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            delay(1);
         } else { // wall in front -> turn a direction
             int direction = (curr - prev) > 0 ? true : false; // determine direction of angle
-            uint64_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
+            uint32_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
             if (leftWall && !rightWall) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise switch to just !rightWall if needed
                 rotate90CWAlt(time, direction);
             } else if (!leftWall && rightWall) { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
                 rotate90CCWAlt(time, direction);
             } else { // finished maze or error, just move forward
                 moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+                delay(1);
             }
             break; // exit while loop after turn
         }
     }
+    prev = curr; // after delay, set previous to current. Next iteration will update current.
 }
 
     /*
@@ -798,21 +800,22 @@ void wallAutomationTest() { // basically calls updateIR() twice find a fix
     float prev = frontDistance; // initialize prev during first run
     float expression = constrain((curr - prev) / DISTANCE_IN_TIME_90_DEGREES, -1.0, 1.0);
     float angle = abs(asin(expression)) * (180.0 / PI);
-    uint64_t start = esp_timer_get_time();
-    while ((esp_timer_get_time() - start < TIME_90_DEGREES )) {
+    uint32_t start = millis();
+    while ((millis() - start < TIME_90_DEGREES )) {
         updateIR();
         frontDistance = irArray[0];
         rightDistance = irArray[1];
         if (frontDistance > wallThreshold) { // no wall in front -> move forward
-            //moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            delay(1);
         } else { // wall in front -> turn a direction
             bool rotate90cw = (rightDistance > rightThreshold); // open on right
             int direction = (curr - prev) > 0 ? true : false; // determine direction of angle
-            uint64_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
+            uint32_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
             if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
-                //rotate90CW(time, direction);
+                rotate90CW(time, direction);
             } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
-                //rotate90CCW(time, direction);
+                rotate90CCW(time, direction);
             }
         }
         Console.printf("curr: %5.2f prev: %5.2f angle: %5.2f ------- \n", curr, prev, angle);
@@ -838,62 +841,50 @@ void updateIR() {
 }
 
 /*
- * Delays for a specified number of microseconds.
- * 1,000,000 microseconds = 1 second
- * @param intervalMicroseconds number of microseconds to delay
- */
-void delayMicroseconds(uint64_t intervalMicroseconds) {
-    uint64_t start = esp_timer_get_time();
-    while (esp_timer_get_time() - start < intervalMicroseconds) {
-        // do nothing
-    }
-}
-
-/*
  * Rotates robot 90 degrees clockwise.
  */
-void rotate90CW(uint64_t addedDelayMicroseconds, bool direction) {
+void rotate90CW(uint32_t addedDelay, bool direction) {
     moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED);
     if (direction) {
-        delayMicroseconds(TIME_90_DEGREES + addedDelayMicroseconds);
+        delay(TIME_90_DEGREES + addedDelay);
     } else {
-        delayMicroseconds(TIME_90_DEGREES - addedDelayMicroseconds);
+        delay(TIME_90_DEGREES - addedDelay);
     }
 }
 
 /*
  * Rotates robot 90 degrees counter clockwise.
  */
-void rotate90CCW(uint64_t addedDelayMicroseconds, bool direction) {
+void rotate90CCW(uint32_t addedDelay, bool direction) {
     moveMotorsHelper(0, TOP_MOTOR_SPEED, TOP_MOTOR_SPEED, 0);
     if (direction) {
-        delayMicroseconds(TIME_90_DEGREES - addedDelayMicroseconds);
+        delay(TIME_90_DEGREES - addedDelay);
     } else {
-        delayMicroseconds(TIME_90_DEGREES + addedDelayMicroseconds);
+        delay(TIME_90_DEGREES + addedDelay);
     }
 }
 
 /*
  * Rotates robot 90 degrees clockwise.
  */
-void rotate90CWAlt(uint64_t addedDelayMicroseconds, bool direction) {
+void rotate90CWAlt(uint32_t addedDelay, bool direction) {
     moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, 0);
     if (direction) {
-        delayMicroseconds((TIME_90_DEGREES * 2) + addedDelayMicroseconds);
+        delay((TIME_90_DEGREES * 2) + addedDelay);
     } else {
-        delayMicroseconds((TIME_90_DEGREES * 2) - addedDelayMicroseconds);
+        delay((TIME_90_DEGREES * 2) - addedDelay);
     }
 }
 
 /*
  * Rotates robot 90 degrees counter clockwise.
  */
-void rotate90CCWAlt(uint64_t addedDelayMicroseconds, bool direction) {
+void rotate90CCWAlt(uint32_t addedDelay, bool direction) {
     moveMotorsHelper(0, 0, TOP_MOTOR_SPEED, 0);
     if (direction) {
-        delayMicroseconds((TIME_90_DEGREES * 2) - addedDelayMicroseconds);
+        delay((TIME_90_DEGREES * 2) - addedDelay);
     } else {
-        delayMicroseconds((TIME_90_DEGREES * 2) + addedDelayMicroseconds);
+        delay((TIME_90_DEGREES * 2) + addedDelay);
     }
 }
 // later convert all these into two using a multiplier
