@@ -234,25 +234,25 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
 //--------------------------------------<< MOTOR LAUNCHER >>-------------------------------------//
 //-----------------------------------------------------------------------------------------------//
 
-bool launchMotors = false;
-bool launchMotorsRamped = false;
+bool launchMotor = false;
+bool launchMotorRamped = false;
 
 void rampUpLaunchMotor();
 void rampDownLaunchMotor();
-void moveLaunchMotorsHelper(int speedForward, int speedBackward);
+void moveLaunchMotorHelper(int speedForward, int speedBackward);
 
 /* 
  * Checks to see if launch motors need to be ramped up/down or neither.
  * @param ctl pointer to control
  */
-void checkLaunchMotors(ControllerPtr ctl) {
-    launchMotors = (ctl->r2()) ? true : false;
-    if (launchMotors && !launchMotorsRamped) {
+void checkLaunchMotor(ControllerPtr ctl) {
+    launchMotor = (ctl->r2()) ? true : false;
+    if (launchMotor && !launchMotorRamped) {
         rampUpLaunchMotor();
-        launchMotorsRamped = true;
-    } else if (!launchMotors && launchMotorsRamped) {
+        launchMotorRamped = true;
+    } else if (!launchMotor && launchMotorRamped) {
         rampDownLaunchMotor();
-        launchMotorsRamped = false;
+        launchMotorRamped = false;
     }
 }
 
@@ -262,7 +262,7 @@ void checkLaunchMotors(ControllerPtr ctl) {
 void rampUpLaunchMotor() {
     int initialSpeed = 55;
     for (int i = initialSpeed; i <= 200; i++) {
-        moveLaunchMotorsHelper(i, 0);
+        moveLaunchMotorHelper(i, 0);
         delay(5);
     }
 }
@@ -273,10 +273,10 @@ void rampUpLaunchMotor() {
 void rampDownLaunchMotor() {
     int initialSpeed = 255;
     for (int i = initialSpeed; i >= 55; i--) {
-        moveLaunchMotorsHelper(i, 0);
+        moveLaunchMotorHelper(i, 0);
         delay(5);
     }
-    moveLaunchMotorsHelper(0, 0);
+    moveLaunchMotorHelper(0, 0);
 }
 
 /*
@@ -284,7 +284,7 @@ void rampDownLaunchMotor() {
  * @param speedForward motor speed forward
  * @param speedBackward motor speed backward
  */
-void moveLaunchMotorsHelper(int speedForward, int speedBackward) {
+void moveLaunchMotorHelper(int speedForward, int speedBackward) {
     analogWrite(IN5, speedForward);
     analogWrite(IN6, speedBackward);
 }
@@ -293,6 +293,10 @@ void moveLaunchMotorsHelper(int speedForward, int speedBackward) {
 //------------------------------------------<< SERVO >>------------------------------------------//
 //-----------------------------------------------------------------------------------------------//
 
+const int ANGLE_MIN = 0;
+const int ANGLE_MAX = 180;
+const int ANGLE_CLOSED = 45;
+const int ANGLE_OPEN = 90;
 Servo angleServo;
 Servo collectionServo;
 
@@ -306,10 +310,21 @@ void servoSetup() {
 
 /*
  * Handles the movement of the angle servo.
+ * Dpad up and down control the angle of the servo. (N U D R L) -> (0, 1, 2, 4, 8)
  * @param ctl pointer to controller
  */
 void moveAngleServo(ControllerPtr ctl) {
-    // Not implemented yet.
+    int angle = angleServo.read(); // current angle
+    uint8_t dpad = ctl->dpad();
+    if (dpad == DPAD_UP) {
+        angle = min(ANGLE_MAX, angle + 1);
+    } else if (dpad == DPAD_DOWN) {
+        angle = max(ANGLE_MIN, angle - 1);
+    }
+    angleServo.write(angle);
+    // delay(20);
+    // If it moves despite not pressing dpad, the angle is updating too quickly. Uncomment delay
+    // and adjust as necessary.
 }
 
 /*
@@ -317,7 +332,16 @@ void moveAngleServo(ControllerPtr ctl) {
  * @param ctl pointer to controller
  */
 void moveCollectionServo(ControllerPtr ctl) {
-    // Not implemented yet.
+    if (launchMotorRamped) { // make sure launch motor is moving before opening to let balls through
+        int leftTrigger = ctl->l2();
+        if (leftTrigger) {
+            collectionServo.write(ANGLE_OPEN);
+        } else {
+            collectionServo.write(ANGLE_CLOSED);
+        }
+    } else {
+        collectionServo.write(ANGLE_CLOSED); // if servo doesnt automaticaly close when launch motor stops, will have to debug
+    }
 }
 
 //-----------------------------------------------------------------------------------------------//
@@ -779,7 +803,7 @@ void loop() {
                     if (sampled) resetColorVariables();
                     // altMoveMotors(myController);
                     if (automate) {
-                        checkLaunchMotors(myController);
+                        checkLaunchMotor(myController);
                         moveMotors(myController);
                         moveAngleServo(myController);
                         moveCollectionServo(myController);
