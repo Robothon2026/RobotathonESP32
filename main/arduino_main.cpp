@@ -23,7 +23,7 @@
 #define IN6 5
 const uint8_t LINE_FOLLOW_PINS[] = {36, 35, 34, 14, 13, 39, 33, 32}; // line sensor pins
 #define FRONT_IR_PIN 25 // ir pins
-#define RIGHT_IR_PIN 26 5 // ir pins
+#define RIGHT_IR_PIN 26 // ir pins
 #define RIGHT_IR_PIN 26 
 #define APDS9960_INT_PIN 0 // color pins
 #define I2C_SDA_PIN 21
