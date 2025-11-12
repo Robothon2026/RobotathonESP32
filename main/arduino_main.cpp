@@ -12,9 +12,6 @@
 #include <Wire.h>
 #include <Arduino_APDS9960.h> // color sensor library
 #include <bits/stdc++.h>
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <WebServer.h>
 #include <ESP32Servo.h>
 
 #define ONBOARD_LED_PIN 2 // LED pin
@@ -26,6 +23,7 @@
 #define IN6 5
 const uint8_t LINE_FOLLOW_PINS[] = {36, 35, 34, 14, 13, 39, 33, 32}; // line sensor pins
 #define FRONT_IR_PIN 25 // ir pins
+#define RIGHT_IR_PIN 26 5 // ir pins
 #define RIGHT_IR_PIN 26 
 #define APDS9960_INT_PIN 0 // color pins
 #define I2C_SDA_PIN 21
@@ -493,7 +491,6 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
     
     // Stage 2
     if (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) {
-        Console.print(currentMode);
         setMode(ctl); // allows exit within loop
         currentColor = recordColor(); // get current Color (r, g, b, none)
         colorFound = false; // set equal to false to reiterate
@@ -515,7 +512,7 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
  * Prints color values.
  */
 void colorDebug() {
-    Console.printf("sampleColor: %d currentColor: %d checkInitial: %d colorFound: %d sampled: %d  ", sampleColor, currentColor, checkInitial, colorFound, sampled);
+    // Console.printf("sampleColor: %d currentColor: %d checkInitial: %d colorFound: %d sampled: %d  ", sampleColor, currentColor, checkInitial, colorFound, sampled);
     Console.printf("R: %3d G: %3d B: %3d A: %3d\n", colorArray[RED], colorArray[GREEN], colorArray[BLUE], colorArray[ALPHA]);
 }
 
@@ -590,16 +587,22 @@ void resetColorVariables() {
 //-------------------------------------<< MAZE AUTOMATION >>-------------------------------------//
 //-----------------------------------------------------------------------------------------------//
 
-const uint8_t NUM_IR_SENSORS = 3;
+const uint8_t NUM_IR_SENSORS = 2;
 ESP32SharpIR frontIRSensor(ESP32SharpIR::GP2Y0A21YK0F, FRONT_IR_PIN);
 ESP32SharpIR rightIRSensor(ESP32SharpIR::GP2Y0A21YK0F, RIGHT_IR_PIN);
 float irArray[NUM_IR_SENSORS];
-const int TIME_90_DEGREES = 1000000; 
-int wallThreshold = 6; // how far until it's considered an open route
+const uint32_t TIME_2880_DEGREES = 1000000;
+//const uint32_t TIME_90_DEGREES = TIME_2880_DEGREES / 32;
+const uint32_t TIME_90_DEGREES = 150000;
+const uint32_t TIME_1_DEGREE = TIME_2880_DEGREES / 2880;
+int wallThreshold = 20; // how far until it's considered an open route
+int leftThreshold = 20; // how far left sensor has to be to consider open route
 int rightThreshold = 20; // how far right sensor has to be to consider open route
 
-void rotate90CW(uint64_t addedDelayMicroseconds);
-void rotate90CCW(uint64_t addedDelayMicroseconds);
+void rotate90CW(uint32_t addedDelayMicroseconds = 0, bool direction = true);
+void rotate90CCW(uint32_t addedDelayMicroseconds = 0, bool direction = true);
+void rotate90CWAlt(uint32_t addedDelayMicroseconds = 0, bool direction = true);
+void rotate90CCWAlt(uint32_t addedDelayMicroseconds = 0, bool direction = true);
 void updateIR();
 
 /*
@@ -615,6 +618,8 @@ void irSetup() {
  * This tries to keep the right sensor within the right threshold line. 
  * It doesn't matter too much since when there is a path on the right, it will be very clear.
  * 1. if no wall in front, move forward.
+ * 2. If wall in front, check right sensor, if open path, rotate 90 degrees clockwise.
+ * 3. Else (wall on right), rotate 90 degrees counter clockwise.
  *          Algorithm A: While moving forward, it should stay within the right bounds. If it's 
  *              within these bounds, just move forward. It may still drift a bit, but that's okay.
  *              If it's minor, I'll leave as is. If it's major, then I'll implement PD control
@@ -636,23 +641,42 @@ void irSetup() {
  *              The delta time is TIME_90_DEGREES because you use this to turn 90 degrees, so after 
  *              calculating the angle you can easily figure out how much you need to adjust to stay 
  *              parallel.
- * 2. If wall in front, check right sensor, if open path, rotate 90 degrees clockwise.
- * 3. Else (wall on right), rotate 90 degrees counter clockwise.
  * 
  */
+
+ /*
+ * Automation that doesn't adjust at all.
+ * Want to stay within [8, 12] cm from wall
+ */
+void wallAutomationA() {
+    float frontDistance = irArray[0];
+    float rightDistance = irArray[1];
+    if (frontDistance > wallThreshold) { // no wall in front -> move forward
+        moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+    } else { // wall in front -> turn a direction
+        bool rotate90cw = (rightDistance > rightThreshold);
+        if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
+            rotate90CW();
+        } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
+            rotate90CCW();
+        }
+    }
+}
 
 /*
  * Automation that slightly adjuts based off thresholds.
  * Want to stay past wallThreshold.
  */
-void wallAutomationA() {
-    float frontDistance = irArray[1];
-    float rightDistance = irArray[2];
+void wallAutomationB() {
+    float frontDistance = irArray[0];
+    float rightDistance = irArray[1];
     int speedAdjust = 20; // CHANGE AS NEEDED
+    int minSweetSpot = 8;
+    int maxSweetSpot = 12;
     if (frontDistance > wallThreshold) { // no wall in front -> move forward
-        if (rightDistance < 8) {
+        if (rightDistance < minSweetSpot) {
             moveMotorsHelper(TOP_MOTOR_SPEED - speedAdjust, 0, TOP_MOTOR_SPEED, 0); // adjust left motor slower
-        } else if (rightDistance > 12) {
+        } else if (rightDistance > maxSweetSpot) {
             moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED - speedAdjust, 0); // adjust right motor slower
         } else {
             moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0); // move forward normally
@@ -660,70 +684,175 @@ void wallAutomationA() {
     } else { // wall in front -> turn a direction
         bool rotate90cw = (rightDistance > rightThreshold);
         if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
-            rotate90CW(0);
+            rotate90CW();
         } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
-            rotate90CCW(0);
+            rotate90CCW();
         }
     }
 }
 
-/*
- * Automation that doesn't adjust at all.
- * Want to stay within [8, 12] cm from wall
- */
-void wallAutomationB() {
-    float frontDistance = irArray[1];
-    float rightDistance = irArray[2];
-    if (frontDistance > wallThreshold) { // no wall in front -> move forward
-        moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
-    } else { // wall in front -> turn a direction
-        bool rotate90cw = (rightDistance > wallThreshold);
-        if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
-            rotate90CW(0);
-        } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
-            rotate90CCW(0);
-        }
-    }
-}
-
-float DISTANCE_IN_TIME_90_DEGREES = 10.0; // how far robot goes at TOP_MOTOR_SPEED in TIME_90_DEGREES microseconds
-                       // find equation like distance = TOP_MOTOR_SPEED * k (figure out k)
+float DISTANCE_IN_TIME_90_DEGREES = 16; // how far robot goes in the time it takes it to do 90 degrees
+float prev = -1;
 
 /*
  * Automation that adjusts based off angle from previous to current within the TIME_90_DEGREES period.
  */
 void wallAutomationC() { // basically calls updateIR() twice find a fix
-    float frontDistance = irArray[1];
-    float rightDistance = irArray[2];
-    float current = rightDistance;
-    uint64_t start = esp_timer_get_time();
-    float rad = acos((previous - current) / DISTANCE_IN_TIME_90_DEGREES);
-    float angle = rad * (180.0 / PI); // convert to degrees
-    while ((esp_timer_get_time() - start < TIME_90_DEGREES )) {
+    float frontDistance = irArray[0];
+    float rightDistance = irArray[1];
+    float curr = rightDistance;
+    if (prev == -1) prev = curr; // initialize prev during first run
+    float expression = constrain((curr - prev) / DISTANCE_IN_TIME_90_DEGREES, -1.0, 1.0);
+    float angle = abs(asin(expression)) * (180.0 / PI); // calculate angle in degrees no negatives
+    uint32_t start = millis();
+    while ((millis() - start < TIME_90_DEGREES )) {
         updateIR();
-        frontDistance = irArray[1];
-        rightDistance = irArray[2];
+        frontDistance = irArray[0];
+        rightDistance = irArray[1];
         if (frontDistance > wallThreshold) { // no wall in front -> move forward
             moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            delay(1);
         } else { // wall in front -> turn a direction
-            bool rotate90cw = (rightDistance > rightThreshold);
-            int direction = (previous - current) >= 0 ? -1 : 1;
-            uint64_t time = (TIME_90_DEGREES / 90.0) * angle * direction; // calculate time to turn based off angle
+            bool rotate90cw = (rightDistance > rightThreshold); // open on right
+            int direction = (curr - prev) > 0 ? true : false; // determine direction of angle
+            uint32_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
             if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
-                rotate90CW(time);
+                rotate90CW(time, direction);
             } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
-                rotate90CCW(time);
+                rotate90CCW(time, direction);
             }
+            break; // exit while loop after turn
         }
     }
-    previous = current; // after delay, set previous to current. Next iteration will update current.
+    //Console.printf("curr: %5.2f prev: %5.2f angle: %5.2f ------- ", curr, prev, angle);
+    prev = curr; // after delay, set previous to current. Next iteration will update current.
+}
+
+/*
+ * Automation that doesn't adjust at all.
+ * Despite using the left and right sensors, it will only use the right sensor to adjust to the middle.
+ * Three cases:
+ * 1. L and R on wall -> move forward.
+ * 2. L on wall but R not -> rotate 90 degrees clockwise.
+ * 3. L not on wall but R on -> rotate 90 degrees counter clockwise.
+ */
+void wallAutomationD() {
+    float leftDistance = irArray[0];
+    float rightDistance = irArray[1];
+    bool leftWall = (leftDistance < leftThreshold);
+    bool rightWall = (rightDistance < rightThreshold);
+    if (leftWall && rightWall) {
+        moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0); // move forward
+    } else if (leftWall && !rightWall) { // opening on right
+        rotate90CWAlt();
+    } else if (!leftWall && rightWall) { // opening on left
+        rotate90CCWAlt();
+    }
+}
+
+/*
+ * Automation that slightly adjuts based off thresholds.
+ * Want to stay past wallThreshold.
+ */
+void wallAutomationE() {
+    float leftDistance = irArray[0];
+    float rightDistance = irArray[1];
+    int speedAdjust = 20; // CHANGE AS NEEDED
+    int minSweetSpot = 8;
+    int maxSweetSpot = 12;
+    bool leftWall = (leftDistance < leftThreshold);
+    bool rightWall = (rightDistance < rightThreshold);
+    if (leftWall && rightWall) {
+        if (rightDistance < minSweetSpot) {
+            moveMotorsHelper(TOP_MOTOR_SPEED - speedAdjust, 0, TOP_MOTOR_SPEED, 0); // adjust left motor slower
+        } else if (rightDistance > maxSweetSpot) {
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED - speedAdjust, 0); // adjust right motor slower
+        } else {
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0); // move forward normally
+        }
+    } else if (leftWall && !rightWall) { // opening on right
+        rotate90CWAlt();
+    } else if (!leftWall && rightWall) { // opening on left
+        rotate90CCWAlt();
+    }
+}
+
+/*
+ * Automation that adjusts based off angle from previous to current within the TIME_90_DEGREES period.
+ */
+void wallAutomationF() {
+    float leftDistance = irArray[0];
+    float rightDistance = irArray[1];
+    bool leftWall = (leftDistance < leftThreshold);
+    bool rightWall = (rightDistance < rightThreshold);
+    float curr = rightDistance;
+    if (prev == -1) prev = curr; // initialize prev during first run
+    float expression = constrain((curr - prev) / DISTANCE_IN_TIME_90_DEGREES, -1.0, 1.0);
+    float angle = abs(asin(expression)) * (180.0 / PI); // calculate angle in degrees no negatives
+    uint32_t start = millis();
+    while ((millis() - start < TIME_90_DEGREES )) {
+        updateIR();
+        leftDistance = irArray[0];
+        rightDistance = irArray[1];
+        if (leftWall && rightWall) { // no wall in front -> move forward
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            delay(1);
+        } else { // wall in front -> turn a direction
+            int direction = (curr - prev) > 0 ? true : false; // determine direction of angle
+            uint32_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
+            if (leftWall && !rightWall) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise switch to just !rightWall if needed
+                rotate90CWAlt(time, direction);
+            } else if (!leftWall && rightWall) { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
+                rotate90CCWAlt(time, direction);
+            } else { // finished maze or error, just move forward
+                moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+                delay(1);
+            }
+            break; // exit while loop after turn
+        }
+    }
+    prev = curr; // after delay, set previous to current. Next iteration will update current.
+}
+
+    /*
+ * Automation that adjusts based off angle from previous to current within the TIME_90_DEGREES period.
+ */
+void wallAutomationTest() { // basically calls updateIR() twice find a fix
+    float frontDistance = irArray[0];
+    float rightDistance = irArray[1];
+    float curr = rightDistance;
+    float prev = frontDistance; // initialize prev during first run
+    float expression = constrain((curr - prev) / DISTANCE_IN_TIME_90_DEGREES, -1.0, 1.0);
+    float angle = abs(asin(expression)) * (180.0 / PI);
+    uint32_t start = millis();
+    while ((millis() - start < TIME_90_DEGREES )) {
+        updateIR();
+        frontDistance = irArray[0];
+        rightDistance = irArray[1];
+        if (frontDistance > wallThreshold) { // no wall in front -> move forward
+            moveMotorsHelper(TOP_MOTOR_SPEED, 0, TOP_MOTOR_SPEED, 0);
+            delay(1);
+        } else { // wall in front -> turn a direction
+            bool rotate90cw = (rightDistance > rightThreshold); // open on right
+            int direction = (curr - prev) > 0 ? true : false; // determine direction of angle
+            uint32_t time = TIME_1_DEGREE * angle; // calculate time to turn based off angle
+            if (rotate90cw) { // if L on wall but R not -> opening on right -> rotate 90 degrees clockwise
+                rotate90CW(time, direction);
+            } else { // if L not on wall but R on -> opening on left -> rotate 90 degrees counter clockwise
+                rotate90CCW(time, direction);
+            }
+        }
+        Console.printf("curr: %5.2f prev: %5.2f angle: %5.2f ------- \n", curr, prev, angle);
+    }
+    //Console.printf("curr: %5.2f prev: %5.2f angle: %5.2f ------- ", curr, prev, angle);
+    prev = curr; // after delay, set previous to current. Next iteration will update current.
 }
 
 /*
  * Prints the wall sensor values.
  */
 void wallDebug() {
-    Console.printf("frontIR: %f rightIR: %f\n", irArray[1], irArray[2]);
+    Console.printf("frontIR: %f rightIR: %f\n", irArray[0], irArray[1]);
 }
 
 /*
@@ -731,35 +860,58 @@ void wallDebug() {
  * 6-80 cm
  */
 void updateIR() {
-    irArray[1] = frontIRSensor.getDistanceFloat();
-    irArray[2] = rightIRSensor.getDistanceFloat();
-}
-
-/*
- * Delays for a specified number of microseconds.
- * 1,000,000 microseconds = 1 second
- * @param intervalMicroseconds number of microseconds to delay
- */
-void delayMicroseconds(uint64_t intervalMicroseconds) {
-    uint64_t start = esp_timer_get_time();
-    while (esp_timer_get_time() - start < intervalMicroseconds) {}
+    irArray[0] = frontIRSensor.getDistanceFloat();
+    irArray[1] = rightIRSensor.getDistanceFloat();
 }
 
 /*
  * Rotates robot 90 degrees clockwise.
  */
-void rotate90CW(uint64_t addedDelayMicroseconds) {
+void rotate90CW(uint32_t addedDelay, bool direction) {
     moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED);
-    delayMicroseconds(TIME_90_DEGREES + addedDelayMicroseconds);
+    if (direction) {
+        delay(TIME_90_DEGREES + addedDelay);
+    } else {
+        delay(TIME_90_DEGREES - addedDelay);
+    }
 }
 
 /*
  * Rotates robot 90 degrees counter clockwise.
  */
-void rotate90CCW(uint64_t addedDelayMicroseconds) {
+void rotate90CCW(uint32_t addedDelay, bool direction) {
     moveMotorsHelper(0, TOP_MOTOR_SPEED, TOP_MOTOR_SPEED, 0);
-    delayMicroseconds(TIME_90_DEGREES + addedDelayMicroseconds);
+    if (direction) {
+        delay(TIME_90_DEGREES - addedDelay);
+    } else {
+        delay(TIME_90_DEGREES + addedDelay);
+    }
 }
+
+/*
+ * Rotates robot 90 degrees clockwise.
+ */
+void rotate90CWAlt(uint32_t addedDelay, bool direction) {
+    moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, 0);
+    if (direction) {
+        delay((TIME_90_DEGREES * 2) + addedDelay);
+    } else {
+        delay((TIME_90_DEGREES * 2) - addedDelay);
+    }
+}
+
+/*
+ * Rotates robot 90 degrees counter clockwise.
+ */
+void rotate90CCWAlt(uint32_t addedDelay, bool direction) {
+    moveMotorsHelper(0, 0, TOP_MOTOR_SPEED, 0);
+    if (direction) {
+        delay((TIME_90_DEGREES * 2) - addedDelay);
+    } else {
+        delay((TIME_90_DEGREES * 2) + addedDelay);
+    }
+}
+// later convert all these into two using a multiplier
 
 //-----------------------------------------------------------------------------------------------//
 //------------------------------------------<< SETUP >>------------------------------------------//
@@ -785,7 +937,7 @@ void setup() {
 void loop() {
     vTaskDelay(1); // Ensures WDT does not get triggered when no controller is connected
     BP32.update(); // Is this needed inside for loop?
-    bool debug = true;
+    bool debug = false;
     bool automate = true;
     // Loop code will only run if controller is connected.
     for (auto myController : myControllers) { // Only execute code when controller is connected
@@ -797,11 +949,10 @@ void loop() {
             // zl intake sequence: spins motor to intake balls
             // d pad to pivot up and down shooter
             //cleanTerminal();
-            Console.printf("Current mode: %s ------- ", MODES[currentMode]);
+            if (debug) Console.printf("Current mode: %s ------- ", MODES[currentMode]);
             switch (currentMode) {
                 case MANUAL: // Manual mode
                     if (sampled) resetColorVariables();
-                    // altMoveMotors(myController);
                     if (automate) {
                         checkLaunchMotor(myController);
                         moveMotors(myController);
@@ -817,7 +968,7 @@ void loop() {
                     break;
                 case WALL_AUTOMATION: // Wall mode
                     updateIR();
-                    if (automate) wallAutomationA(); // or wallAutomationB() or wallAutomationC()
+                    if (automate) wallAutomationA();
                     if (debug) wallDebug();
                     break;
                 case LINE_AUTOMATION: // Line follow mode
