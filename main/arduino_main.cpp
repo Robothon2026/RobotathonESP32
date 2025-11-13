@@ -28,8 +28,8 @@ const uint8_t LINE_FOLLOW_PINS[] = {36, 35, 34, 14, 13, 39, 33, 32}; // line sen
 #define APDS9960_INT_PIN 0 // color pins
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
-#define ANGLE_SERVO_PIN 27 // angle servo pin
-#define COLLECTION_SERVO_PIN 23 // collection servo pin
+#define ANGLE_SERVO_PIN 23 // angle servo pin
+#define COLLECTION_SERVO_PIN 27 // collection servo pin
 
 const uint8_t TOP_MOTOR_SPEED = 255;
 const char* const MODES[] = {"Manual", "Color automation", "Wall automation", "Line automation"};
@@ -38,6 +38,7 @@ const uint8_t COLOR_AUTOMATION = 1;
 const uint8_t WALL_AUTOMATION = 2;
 const uint8_t LINE_AUTOMATION = 3;
 int currentMode = 0; // current mode for robot
+int angle = 0; // current angle of angleServo
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 
 //-----------------------------------------------------------------------------------------------//
@@ -304,22 +305,26 @@ Servo collectionServo;
 void servoSetup() {
     angleServo.attach(ANGLE_SERVO_PIN);
     collectionServo.attach(COLLECTION_SERVO_PIN);
+    angle = angleServo.read(); // current angle
 }
+
 
 /*
  * Handles the movement of the angle servo.
  * Dpad up and down control the angle of the servo. (N U D R L) -> (0, 1, 2, 4, 8)
  * @param ctl pointer to controller
  */
-void moveAngleServo(ControllerPtr ctl) {
-    int angle = angleServo.read(); // current angle
+void moveAngleServo(ControllerPtr ctl, int &angle) {
     uint8_t dpad = ctl->dpad();
-    if (dpad == DPAD_UP) {
+    if (dpad == 1) {
         angle = min(ANGLE_MAX, angle + 1);
-    } else if (dpad == DPAD_DOWN) {
+        Console.printf("Angle: %3d\n", angle);
+        angleServo.write(angle);
+    } else if (dpad == 2) {
         angle = max(ANGLE_MIN, angle - 1);
+        Console.printf("Angle: %3d\n", angle);
+        angleServo.write(angle);
     }
-    angleServo.write(angle);
     // delay(20);
     // If it moves despite not pressing dpad, the angle is updating too quickly. Uncomment delay
     // and adjust as necessary.
@@ -593,7 +598,7 @@ ESP32SharpIR rightIRSensor(ESP32SharpIR::GP2Y0A21YK0F, RIGHT_IR_PIN);
 float irArray[NUM_IR_SENSORS];
 const uint32_t TIME_2880_DEGREES = 1000000;
 //const uint32_t TIME_90_DEGREES = TIME_2880_DEGREES / 32;
-const uint32_t TIME_90_DEGREES = 150000;
+const uint32_t TIME_90_DEGREES = 1250;
 const uint32_t TIME_1_DEGREE = TIME_2880_DEGREES / 2880;
 int wallThreshold = 20; // how far until it's considered an open route
 int leftThreshold = 20; // how far left sensor has to be to consider open route
@@ -928,6 +933,7 @@ void setup() {
     motorSetup(); // Setup motor pins
     //lineSetup(); // Setup line sensors
     irSetup(); // Setup IR sensor
+    servoSetup(); // Setup Servos
 }
 
 //-----------------------------------------------------------------------------------------------//
@@ -937,7 +943,7 @@ void setup() {
 void loop() {
     vTaskDelay(1); // Ensures WDT does not get triggered when no controller is connected
     BP32.update(); // Is this needed inside for loop?
-    bool debug = false;
+    bool debug = true;
     bool automate = true;
     // Loop code will only run if controller is connected.
     for (auto myController : myControllers) { // Only execute code when controller is connected
@@ -956,7 +962,7 @@ void loop() {
                     if (automate) {
                         checkLaunchMotor(myController);
                         moveMotors(myController);
-                        moveAngleServo(myController);
+                        moveAngleServo(myController, angle);
                         moveCollectionServo(myController);
                     }
                     if (debug) dumpGamepad(myController);
