@@ -461,8 +461,10 @@ bool checkInitial = false; // value to check if we moved off the color
 bool colorFound = false; // value to check if we found the color again
 bool sampled = false;
 
-int recordColor();
-int recordColorAlt();
+int recordColorA();
+int recordColorB();
+int recordColorC();
+int recordColorD();
 void resetColorVariables();
 
 /*
@@ -487,7 +489,7 @@ void colorSetup() {
 void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable significantly affects performance
     // Stage 1
     if (!sampled) {
-        sampleColor = recordColor(); // saves red, green, blue, or none
+        sampleColor = recordColorD(); // saves red, green, blue, or none
         currentColor = sampleColor;
         checkInitial = false; // value to check if we moved off the color
         colorFound = false; // value to check if we found the color again
@@ -497,7 +499,7 @@ void colorAutomation(ControllerPtr ctl) { // ask mentor if global variable signi
     // Stage 2
     if (!(checkInitial && colorFound) && currentMode == COLOR_AUTOMATION) {
         setMode(ctl); // allows exit within loop
-        currentColor = recordColor(); // get current Color (r, g, b, none)
+        currentColor = recordColorD(); // get current Color (r, g, b, none)
         colorFound = false; // set equal to false to reiterate
         if (currentColor != sampleColor) { // if we moved off the sampled color
             checkInitial = true;
@@ -534,7 +536,7 @@ void updateColor() {
  * -1: None 0: red 1: green 2: blue
  * @return number associated with color
  */
-int recordColor() {
+int recordColorA() {
     int sum = 0;
     int maxNumber = -1;
     int maxIndex = -1;
@@ -546,7 +548,7 @@ int recordColor() {
             maxNumber = colorArray[i];
             maxIndex = i;
         }
-        if (colorArray[i] > 25) {
+        if (colorArray[i] > 32) {
             over++;
         }
     }
@@ -564,7 +566,7 @@ int recordColor() {
  * -1: None 0: red 1: green 2: blue
  * @return number associated with color
  */
-int recordColorAlt() {
+int recordColorB() {
     int multiplier = 1; // number other colors have to stay below
     int color = NONE; // initialize to none until it finds a color
     if ((colorArray[RED] > colorArray[GREEN] * multiplier) && (colorArray[RED] > colorArray[BLUE] * multiplier)) {
@@ -575,6 +577,67 @@ int recordColorAlt() {
         color = BLUE;
     }
     return color;
+}
+
+/*
+ * Helper to find specific color
+ * -1: None 0: red 1: green 2: blue
+ * @return number associated with color
+ */
+int recordColorC() {
+    int sum = 0;
+    int maxNumber = -1;
+    int maxIndex = -1;
+    int blackSumThreshold = 40;
+    int whiteSumThreshold = 110;
+    int alphaThreshold = 105;
+    for (int i = 0; i < NUM_COLORS - 1; i++) {
+        sum += colorArray[i];
+        if (colorArray[i] > maxNumber) {
+            maxNumber = colorArray[i];
+            maxIndex = i;
+        }
+    }
+    if (sum < blackSumThreshold || sum > whiteSumThreshold || colorArray[ALPHA] > alphaThreshold) { // check black
+        return NONE;
+    }
+    if (maxIndex == 2 && colorArray[ALPHA] > 80) {
+        return NONE;
+    }
+    return maxIndex;
+}
+// r: 22 10 16
+// g: 25 39 28
+// b: 10 26 45
+
+int recordColorD() {
+    int rr = 22; // red val on red
+    int rg = 10; // green val on red
+    int rb = 15; // blue val on red
+
+    int gr = 25; // red val on green
+    int gg = 39; // green val on green
+    int gb = 26; // blue val on green
+
+    int br = 10; // red val on blue
+    int bg = 26; // green val on blue
+    int bb = 45; // blue val on blue
+
+    int threshold = 5;
+
+    int red = colorArray[RED];
+    int green = colorArray[GREEN];
+    int blue = colorArray[BLUE];
+    int alpha = colorArray[ALPHA];
+    if (((red < rr + threshold) && (red > rr - threshold)) && ((green < rg + threshold) && (green > rg - threshold)) && ((blue < rb + threshold) && (blue > rb - threshold))) {
+        return RED;
+    } else if (((red < gr + threshold) && (red > gr - threshold)) && ((green < gg + threshold) && (green > gg - threshold)) && ((blue < gb + threshold) && (blue > gb - threshold))) {
+        return GREEN;
+    } else if (((red < br + threshold) && (red > br - threshold)) && ((green < bg + threshold) && (green > bg - threshold)) && ((blue < bb + threshold) && (blue > bb - threshold))) {
+        return BLUE;
+    } else {
+        return NONE;
+    }
 }
 
 /*
