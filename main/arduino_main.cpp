@@ -371,7 +371,9 @@ int lineHelper();
 void lineSetup() {
     qtr.setTypeAnalog();
     qtr.setSensorPins(LINE_FOLLOW_PINS, NUM_LINE_SENSORS);
+    moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED); // Move forward slowly while calibrating
     calibrateLineSensors(); // Calibrate line sensor
+    moveMotorsHelper(0, 0, 0, 0); // Stop moving after calibration
 }
 
 /*
@@ -600,7 +602,7 @@ int recordColorC() {
             maxIndex = i;
         }
     }
-    if (sum < blackSumThreshold || sum > whiteSumThreshold || colorArray[ALPHA] > alphaThreshold) { // check black
+    if (sum < blackSumThreshold || sum > whiteSumThreshold) { // check black
         return NONE;
     }
     if (maxIndex == 2 && colorArray[ALPHA] > 80) {
@@ -1069,7 +1071,7 @@ void setup() {
     Serial.begin(115200);
     pinMode(ONBOARD_LED_PIN, OUTPUT); // Setup LED pin
     motorSetup(); // Setup motor pins
-    //lineSetup(); // Setup line sensors
+    lineSetup(); // Setup line sensors
     irSetup(); // Setup IR sensor
     servoSetup(); // Setup Servos
 }
