@@ -29,7 +29,6 @@ const uint8_t LINE_FOLLOW_PINS[] = {36, 35, 34, 14, 13, 39, 33, 32}; // line sen
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 #define ANGLE_SERVO_PIN 23 // angle servo pin
-#define COLLECTION_SERVO_PIN 27 // collection servo pin
 
 const uint8_t TOP_MOTOR_SPEED = 255;
 const char* const MODES[] = {"Manual", "Color automation", "Wall automation", "Line automation"};
@@ -38,7 +37,6 @@ const uint8_t COLOR_AUTOMATION = 1;
 const uint8_t WALL_AUTOMATION = 2;
 const uint8_t LINE_AUTOMATION = 3;
 int currentMode = 0; // current mode for robot
-int angle = 0; // current angle of angleServo
 extern ControllerPtr myControllers[BP32_MAX_GAMEPADS]; // controller
 
 //-----------------------------------------------------------------------------------------------//
@@ -293,18 +291,18 @@ void moveLaunchMotorHelper(int speedForward, int speedBackward) {
 //-----------------------------------------------------------------------------------------------//
 
 const int ANGLE_MIN = 0;
-const int ANGLE_MAX = 180;
-const int ANGLE_CLOSED = 45;
-const int ANGLE_OPEN = 90;
+const int ANGLE_MAX = 60;
+const int ANGLE_CLOSED = 0;
+const int ANGLE_OPEN = 60;
 Servo angleServo;
 Servo collectionServo;
+int angle = 0; // current angle of angleServo
 
 /*
  * Setups up the angle and collection servo.
  */
 void servoSetup() {
     angleServo.attach(ANGLE_SERVO_PIN);
-    collectionServo.attach(COLLECTION_SERVO_PIN);
     angle = angleServo.read(); // current angle
 }
 
@@ -317,33 +315,9 @@ void servoSetup() {
 void moveAngleServo(ControllerPtr ctl, int &angle) {
     uint8_t dpad = ctl->dpad();
     if (dpad == 1) {
-        angle = min(ANGLE_MAX, angle + 1);
-        Console.printf("Angle: %3d\n", angle);
-        angleServo.write(angle);
+        angleServo.write(ANGLE_OPEN);
     } else if (dpad == 2) {
-        angle = max(ANGLE_MIN, angle - 1);
-        Console.printf("Angle: %3d\n", angle);
-        angleServo.write(angle);
-    }
-    // delay(20);
-    // If it moves despite not pressing dpad, the angle is updating too quickly. Uncomment delay
-    // and adjust as necessary.
-}
-
-/*
- * Handles the movement of the collection servo.
- * @param ctl pointer to controller
- */
-void moveCollectionServo(ControllerPtr ctl) {
-    if (launchMotorRamped) { // make sure launch motor is moving before opening to let balls through
-        int leftTrigger = ctl->l2();
-        if (leftTrigger) {
-            collectionServo.write(ANGLE_OPEN);
-        } else {
-            collectionServo.write(ANGLE_CLOSED);
-        }
-    } else {
-        collectionServo.write(ANGLE_CLOSED); // if servo doesnt automaticaly close when launch motor stops, will have to debug
+        angleServo.write(ANGLE_CLOSED);
     }
 }
 
@@ -354,16 +328,25 @@ void moveCollectionServo(ControllerPtr ctl) {
 const uint8_t NUM_LINE_SENSORS = sizeof(LINE_FOLLOW_PINS) / sizeof(LINE_FOLLOW_PINS[0]);
 QTRSensors qtr;// line
 uint16_t lineArray[NUM_LINE_SENSORS]; // array holding information for NUM_LINE_SENSORS
-float kP= 0.15; // proportional constant for line following
-float kD = 0.05; // derivative constant for line following
+float kP= 0.5; // proportional constant for line following
+float kD = 10.0; // derivative constant for line following
 float kI = 0; // integral constant for line following
 float lastEror = 0; // last error for derivative calculation
 float sum = 0; // sum of errors for integral calculation
 float previous = 0; // store previous value of distance from wall
+bool lineCalibrated = false;
+bool pressedPU = false;
+bool pressedPD = false;
+bool pressedDU = false;
+bool pressedDD = false;
 
 
 void calibrateLineSensors();
-int lineHelper();
+float lineHelper();
+void updatePID(ControllerPtr ctl);
+void setPressed(bool val1, bool val2, bool val3, bool val4);
+bool checkInBetween();
+
 
 /*
  * Sets up the line following sensors.
@@ -371,19 +354,20 @@ int lineHelper();
 void lineSetup() {
     qtr.setTypeAnalog();
     qtr.setSensorPins(LINE_FOLLOW_PINS, NUM_LINE_SENSORS);
-    moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED); // Move forward slowly while calibrating
-    calibrateLineSensors(); // Calibrate line sensor
-    moveMotorsHelper(0, 0, 0, 0); // Stop moving after calibration
 }
 
 /*
  * Handles the line following automation.
  */
-void lineAutomation() {
+void lineAutomationA(ControllerPtr ctl) {
     //Fabian's ALGORITHIM
+    updatePID(ctl);
     int speed = TOP_MOTOR_SPEED; // top speed of motors
-    int correction = lineHelper(); // The correction for the lineHelper that will fix the robot's path
-    moveMotorsHelper(speed + correction ,0 ,speed - correction ,0); // move motors with correction applied to speed
+    float correction = lineHelper(); // The correction for the lineHelper that will fix the robot's path
+    correction = constrain(correction, -speed, speed); // avoid asking motors to spin faster than possible
+    int leftSpeed = constrain((int)(speed + correction), 0, TOP_MOTOR_SPEED);
+    int rightSpeed = constrain((int)(speed - correction), 0, TOP_MOTOR_SPEED);
+    moveMotorsHelper(leftSpeed ,0 ,rightSpeed ,0); // move motors with correction applied to speed
     /* if correction is negative, move left by adjusting the left wheel slower while adjusitng the right wheel faster
     if correction is positive, move right by adjusting the right wheel slower while adjusitng the left wheel faster
     if correction is zero, move straight forward at full speed
@@ -393,6 +377,55 @@ void lineAutomation() {
     then the error would go based off the middle which i dont think would be as effecient and just more complicated then using 0
     for white and 1,000 for black
     */
+   Console.printf("kP: %f kI: %f kD: %f\n", kP, kI, kD);
+}
+
+int lineThreshold = 950;
+int lineSpeed = TOP_MOTOR_SPEED;
+int ricochet = 0;
+int lastRemembered = -1;
+
+void lineAutomationB() {
+    int firstSensor = lineArray[0];
+    int lastSensor = lineArray[7];
+    // Three cases:
+    // 1. no sensor activated -> move forward
+    // 2. first sensor activated -> move left
+    // 3. last sensor activated -> move right
+    // 4. no sensor activated -> spin in certain direction
+    bool firstOnLine = firstSensor > lineThreshold;
+    bool lastOnLine = lastSensor > lineThreshold;
+    bool lineInBetween = checkInBetween();
+    if (firstOnLine && ricochet < 10) {
+        moveMotorsHelper(0, lineSpeed, lineSpeed, 0);
+        ricochet++;
+        lastRemembered = 0;
+    } else if (lastOnLine && ricochet < 10) {
+        moveMotorsHelper(lineSpeed, 0, 0, lineSpeed);
+        ricochet++;
+        lastRemembered = 1;
+    } else if (lineInBetween || ricochet >= 10) {
+        moveMotorsHelper(lineSpeed, 0, lineSpeed, 0);
+        ricochet = 0;
+    } else {
+        if (lastRemembered == 0) {
+            moveMotorsHelper(lineSpeed / 2, 0, lineSpeed, 0);
+        } else if (lastRemembered == 1) {
+            moveMotorsHelper(lineSpeed, 0, lineSpeed / 2, 0);
+        }
+        ricochet = 0;
+    }
+}
+
+bool checkInBetween() {
+    int sum = 0;
+    for (int i = 1; i < NUM_LINE_SENSORS - 1; i++) {
+        if (lineArray[i] > lineThreshold) {
+            return true;
+        }
+    }
+    return false;
+
 }
 
 /*
@@ -412,14 +445,15 @@ void updateLine() {
     qtr.readLineBlack(lineArray);
 }
 
-int lineHelper() {
+float lineHelper() {
     float error = 0;
-    int weights[] = {-3, -2, -1, 0, 0, 1, 2, 3}; // Adjust weights based on number of sensors
+    int wPosition = 0;
+    int weights[] = {-3000, -2000, -1000, -500, 500, 1000, 2000, 3000}; // Adjust weights based on number of sensors
     for(int i = 0; i < NUM_LINE_SENSORS; i++) { // for loop to go through all sensors
-        error += lineArray[i] * weights[i]; // calculates the weighted error with the value of the sensor                 
+        wPosition += lineArray[i] * weights[i]; // calculates the weighted error with the value of the sensor  
     }                                       // example: if leftmost sensor is on black (1000) and all others are white (0)
                                             // then error = 0 * -3 + 1,000 * -2 +  1,000 * -1 + 0 * 0 + 0* 0 + 0 * 1 + 0 * 2 + 0 * 3 = -3000
-    error = error / 1000.0; // Normalize error by diving by the highest sensor value that is 1000;
+    error = wPosition / 3000; // Normalize error by diving by the highest sensor value that is 1000;
     float P = kP * error; // equation for the porpotional term for the immediate correction
     float D = kD * (error - lastEror); // equation for the derivative term for appliying a small brake on the porpotional term
     sum = sum + error; // sum of all errors up to now for integral term to use to track long term errors over the course
@@ -442,6 +476,39 @@ void calibrateLineSensors() {
         delay(20);
     }
     Console.println("Calibration done!");
+}
+
+void startCalibration() {
+    moveMotorsHelper(TOP_MOTOR_SPEED, 0, 0, TOP_MOTOR_SPEED);
+    calibrateLineSensors();
+    moveMotorsHelper(0, 0, 0, 0);
+    lineCalibrated = true;
+    currentMode = MANUAL;
+}
+
+void updatePID(ControllerPtr ctl) {
+    if (ctl->dpad() == 1 && !pressedPU) {
+        kP++;
+        setPressed(true, false, false, false);
+    } else if (ctl->dpad() == 2 && !pressedPD) {
+        kP--;
+        setPressed(false, true, false, false);
+    } else if (ctl->dpad() == 4 && !pressedDU) {
+        kD++;
+        setPressed(false, false, true, false);
+    } else if (ctl->dpad() == 8 && !pressedDD) {
+        kD--;
+        setPressed(false, false, false, true);
+    } else {
+        setPressed(false, false, false, false);
+    }
+}
+
+void setPressed(bool val1, bool val2, bool val3, bool val4) {
+    pressedPU = val1;
+    pressedPD = val2;
+    pressedDU = val3;
+    pressedDD = val4;
 }
 
 
@@ -533,6 +600,8 @@ void colorDebug() {
 void updateColor() {
     while (!apds.colorAvailable()) { delay(5); } // Wait until color is read from the sensor 
     apds.readColor(colorArray[RED], colorArray[GREEN], colorArray[BLUE], colorArray[ALPHA]);
+    colorArray[RED] = (int)(colorArray[RED] * 1.43);
+    colorArray[GREEN] = (int)(colorArray[GREEN] * 1.25);
 }
 
 /*
@@ -618,14 +687,17 @@ int recordColorD() {
     int rr = 22; // red val on red
     int rg = 10; // green val on red
     int rb = 15; // blue val on red
+    int ra = 0;
 
     int gr = 25; // red val on green
     int gg = 39; // green val on green
     int gb = 26; // blue val on green
+    int ga = 0;
 
     int br = 10; // red val on blue
     int bg = 26; // green val on blue
     int bb = 45; // blue val on blue
+    int ba = 0;
 
     int threshold = 5;
 
@@ -633,11 +705,11 @@ int recordColorD() {
     int green = colorArray[GREEN];
     int blue = colorArray[BLUE];
     int alpha = colorArray[ALPHA];
-    if (((red < rr + threshold) && (red > rr - threshold)) && ((green < rg + threshold) && (green > rg - threshold)) && ((blue < rb + threshold) && (blue > rb - threshold))) {
+    if (((red < rr + threshold) && (red > rr - threshold)) && ((green < rg + threshold) && (green > rg - threshold)) && ((blue < rb + threshold) && (blue > rb - threshold)) && ((alpha < ra + threshold) && (alpha > ra - threshold))){
         return RED;
-    } else if (((red < gr + threshold) && (red > gr - threshold)) && ((green < gg + threshold) && (green > gg - threshold)) && ((blue < gb + threshold) && (blue > gb - threshold))) {
+    } else if (((red < gr + threshold) && (red > gr - threshold)) && ((green < gg + threshold) && (green > gg - threshold)) && ((blue < gb + threshold) && (blue > gb - threshold)) && ((alpha < ga + threshold) && (alpha > ga - threshold))) {
         return GREEN;
-    } else if (((red < br + threshold) && (red > br - threshold)) && ((green < bg + threshold) && (green > bg - threshold)) && ((blue < bb + threshold) && (blue > bb - threshold))) {
+    } else if (((red < br + threshold) && (red > br - threshold)) && ((green < bg + threshold) && (green > bg - threshold)) && ((blue < bb + threshold) && (blue > bb - threshold)) && ((alpha < ba + threshold) && (alpha > ba - threshold))) {
         return BLUE;
     } else {
         return NONE;
@@ -1059,14 +1131,7 @@ void setup() {
     BP32.setup(&onConnectedController, &onDisconnectedController);
     BP32.forgetBluetoothKeys(); 
     esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
-    // ----------- ALLOWLIST SETUP (Working, tested pattern) -----------
-    delay(500);  // allow BT stack to fully initialize
-
     uni_bt_allowlist_set_enabled(true);
-
-    uint8_t allowedMac[] = { 0x98, 0xB6, 0x07, 0x67, 0xCB, 0x39 };
-    uni_bt_allowlist_add_addr(allowedMac);
-
     colorSetup(); // Setup color sensor
     Serial.begin(115200);
     pinMode(ONBOARD_LED_PIN, OUTPUT); // Setup LED pin
@@ -1105,7 +1170,6 @@ void loop() {
                         // moveMotorsA(myController);
                         moveMotorsB(myController);
                         moveAngleServo(myController, angle);
-                        moveCollectionServo(myController);
                     }
                     if (debug) dumpGamepad(myController);
                     break;
@@ -1120,8 +1184,9 @@ void loop() {
                     if (debug) wallDebugB();
                     break;
                 case LINE_AUTOMATION: // Line follow mode
+                    if (!lineCalibrated) startCalibration();
                     updateLine();
-                    if (automate) lineAutomation();
+                    if (automate) lineAutomationB();
                     if (debug) lineDebug();
                     break;
             }
