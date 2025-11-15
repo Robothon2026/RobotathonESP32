@@ -598,9 +598,9 @@ ESP32SharpIR rightIRSensor(ESP32SharpIR::GP2Y0A21YK0F, RIGHT_IR_PIN);
 float irArray[NUM_IR_SENSORS];
 const uint32_t TIME_2880_DEGREES = 1000000;
 //const uint32_t TIME_90_DEGREES = TIME_2880_DEGREES / 32;
-const uint32_t TIME_90_DEGREES = 1250;
+const uint32_t TIME_90_DEGREES = 1000;
 const uint32_t TIME_1_DEGREE = TIME_2880_DEGREES / 2880;
-int wallThreshold = 20; // how far until it's considered an open route
+int wallThreshold = 22; // how far until it's considered an open route
 int leftThreshold = 20; // how far left sensor has to be to consider open route
 int rightThreshold = 20; // how far right sensor has to be to consider open route
 
@@ -926,7 +926,14 @@ void setup() {
     BP32.setup(&onConnectedController, &onDisconnectedController);
     BP32.forgetBluetoothKeys(); 
     esp_log_level_set("gpio", ESP_LOG_ERROR); // Suppress info log spam from gpio_isr_service
+    // ----------- ALLOWLIST SETUP (Working, tested pattern) -----------
+    delay(500);  // allow BT stack to fully initialize
+
     uni_bt_allowlist_set_enabled(true);
+
+    uint8_t allowedMac[] = { 0x98, 0xB6, 0x07, 0x67, 0xCB, 0x39 };
+    uni_bt_allowlist_add_addr(allowedMac);
+
     colorSetup(); // Setup color sensor
     Serial.begin(115200);
     pinMode(ONBOARD_LED_PIN, OUTPUT); // Setup LED pin
