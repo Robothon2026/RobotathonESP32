@@ -233,6 +233,7 @@ void moveMotorsHelper(int leftSpeedForward, int leftSpeedBackward, int rightSpee
 
 bool launchMotor = false;
 bool launchMotorRamped = false;
+int maxLauncherSpeed = constrain((int)(TOP_MOTOR_SPEED * .67), 55, 255);
 
 void rampUpLaunchMotor();
 void rampDownLaunchMotor();
@@ -258,7 +259,7 @@ void checkLaunchMotor(ControllerPtr ctl) {
  */
 void rampUpLaunchMotor() {
     int initialSpeed = 55;
-    for (int i = initialSpeed; i <= 200; i++) {
+    for (int i = initialSpeed; i <= maxLauncherSpeed - 55; i++) {
         moveLaunchMotorHelper(i, 0);
         delay(5);
     }
@@ -268,7 +269,7 @@ void rampUpLaunchMotor() {
  * Ramp down launch motors so it doesn't stop instantly.
  */
 void rampDownLaunchMotor() {
-    int initialSpeed = 255;
+    int initialSpeed = maxLauncherSpeed;
     for (int i = initialSpeed; i >= 55; i--) {
         moveLaunchMotorHelper(i, 0);
         delay(5);
@@ -377,7 +378,6 @@ void lineAutomationA(ControllerPtr ctl) {
     then the error would go based off the middle which i dont think would be as effecient and just more complicated then using 0
     for white and 1,000 for black
     */
-   Console.printf("kP: %f kI: %f kD: %f\n", kP, kI, kD);
 }
 
 int lineThreshold = 950;
@@ -409,9 +409,9 @@ void lineAutomationB() {
         ricochet = 0;
     } else {
         if (lastRemembered == 0) {
-            moveMotorsHelper(lineSpeed / 2, 0, lineSpeed, 0);
+            moveMotorsHelper(0, 0, lineSpeed, 0);
         } else if (lastRemembered == 1) {
-            moveMotorsHelper(lineSpeed, 0, lineSpeed / 2, 0);
+            moveMotorsHelper(lineSpeed, 0, 0, 0);
         }
         ricochet = 0;
     }
@@ -470,12 +470,9 @@ float lineHelper() {
  */
 void calibrateLineSensors() {
     for (uint8_t i = 0; i < 250; i++) {
-        cleanTerminal();
-        Console.printf("Calibrating %d/250\n", i + 1);
         qtr.calibrate();
         delay(20);
     }
-    Console.println("Calibration done!");
 }
 
 void startCalibration() {
@@ -531,12 +528,16 @@ int currentColor = -1;
 bool checkInitial = false; // value to check if we moved off the color
 bool colorFound = false; // value to check if we found the color again
 bool sampled = false;
+int redInARow = 0;
+int greenInARow = 0;
+int blueInARow = 0;
 
 int recordColorA();
 int recordColorB();
 int recordColorC();
 int recordColorD();
 void resetColorVariables();
+void updateInARow(int val1, int val2, int val3);
 
 /*
  * Sets up the color sensor and I2C communication.
@@ -683,37 +684,54 @@ int recordColorC() {
 // g: 25 39 28
 // b: 10 26 45
 
+int rangeThreshold = 10;
+int inARowThreshold = 3;
+
 int recordColorD() {
-    int rr = 22; // red val on red
-    int rg = 10; // green val on red
-    int rb = 15; // blue val on red
-    int ra = 0;
+    int rr = 51; // red val on red
+    int rg = 18; // green val on red
+    int rb = 22; // blue val on red
+    int ra = 66;
 
-    int gr = 25; // red val on green
-    int gg = 39; // green val on green
-    int gb = 26; // blue val on green
-    int ga = 0;
+    int gr = 54; // red val on green
+    int gg = 65; // green val on green
+    int gb = 36; // blue val on green
+    int ga = 124;
 
-    int br = 10; // red val on blue
-    int bg = 26; // green val on blue
-    int bb = 45; // blue val on blue
-    int ba = 0;
-
-    int threshold = 5;
+    int br = 24; // red val on blue
+    int bg = 48; // green val on blue
+    int bb = 57; // blue val on blue
+    int ba = 109;
 
     int red = colorArray[RED];
     int green = colorArray[GREEN];
     int blue = colorArray[BLUE];
     int alpha = colorArray[ALPHA];
-    if (((red < rr + threshold) && (red > rr - threshold)) && ((green < rg + threshold) && (green > rg - threshold)) && ((blue < rb + threshold) && (blue > rb - threshold)) && ((alpha < ra + threshold) && (alpha > ra - threshold))){
-        return RED;
-    } else if (((red < gr + threshold) && (red > gr - threshold)) && ((green < gg + threshold) && (green > gg - threshold)) && ((blue < gb + threshold) && (blue > gb - threshold)) && ((alpha < ga + threshold) && (alpha > ga - threshold))) {
-        return GREEN;
-    } else if (((red < br + threshold) && (red > br - threshold)) && ((green < bg + threshold) && (green > bg - threshold)) && ((blue < bb + threshold) && (blue > bb - threshold)) && ((alpha < ba + threshold) && (alpha > ba - threshold))) {
-        return BLUE;
+    if (((red < rr + rangeThreshold) && (red > rr - rangeThreshold)) && ((green < rg + rangeThreshold) && (green > rg - rangeThreshold)) && ((blue < rb + rangeThreshold) && (blue > rb - rangeThreshold)) && ((alpha < ra + rangeThreshold) && (alpha > ra - rangeThreshold))) {
+        updateInARow(redInARow + 1, 0, 0);
+        if (redInARow > inARowThreshold || !sampled) {
+            return RED;
+        }
+    } else if (((red < gr + rangeThreshold) && (red > gr - rangeThreshold)) && ((green < gg + rangeThreshold) && (green > gg - rangeThreshold)) && ((blue < gb + rangeThreshold) && (blue > gb - rangeThreshold)) && ((alpha < ga + rangeThreshold) && (alpha > ga - rangeThreshold))) {
+        updateInARow(0, greenInARow + 1, 0);
+        if (greenInARow > inARowThreshold || !sampled) {
+            return GREEN;
+        }
+    } else if (((red < br + rangeThreshold) && (red > br - rangeThreshold)) && ((green < bg + rangeThreshold) && (green > bg - rangeThreshold)) && ((blue < bb + rangeThreshold) && (blue > bb - rangeThreshold)) && ((alpha < ba + rangeThreshold) && (alpha > ba - rangeThreshold))) {
+        updateInARow(0, 0, blueInARow + 1);
+        if (blueInARow > inARowThreshold || !sampled) {
+            return BLUE;
+        }
     } else {
-        return NONE;
+        updateInARow(0, 0, 0);
     }
+    return NONE;
+}
+
+void updateInARow(int val1, int val2, int val3) {
+    redInARow = val1;
+    greenInARow = val2;
+    blueInARow = val3;
 }
 
 /*
@@ -725,6 +743,9 @@ void resetColorVariables() {
     checkInitial = false;
     colorFound = false;
     sampled = false;
+    redInARow = 0;
+    greenInARow = 0;
+    blueInARow = 0;
 }
 
 //-----------------------------------------------------------------------------------------------//
@@ -739,7 +760,7 @@ const uint32_t TIME_2880_DEGREES = 14000;
 //const uint32_t TIME_90_DEGREES = TIME_2880_DEGREES / 32;
 const uint32_t TIME_90_DEGREES = TIME_2880_DEGREES / 32;
 const uint32_t TIME_1_DEGREE = TIME_2880_DEGREES / 2880;
-int wallThreshold = 15; // how far until it's considered an open route
+int wallThreshold = 18; // how far until it's considered an open route
 int leftThreshold = 20; // how far left sensor has to be to consider open route
 int rightThreshold = 20; // how far right sensor has to be to consider open route
 int wallAutomationSpeed = TOP_MOTOR_SPEED - 50;
@@ -1190,8 +1211,6 @@ void loop() {
                     if (debug) lineDebug();
                     break;
             }
-
-            if (debug && !automate) delay(100);
             digitalWrite(ONBOARD_LED_PIN, LOW); // Turn off LED when done
         }
     }
